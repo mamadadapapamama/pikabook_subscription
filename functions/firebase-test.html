@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Firebase Functions 테스트</title>
+    <script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.0.0/firebase-functions-compat.js"></script>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            margin: 20px; 
+            background: #f5f5f5; 
+        }
+        .container { 
+            max-width: 1000px; 
+            margin: 0 auto; 
+            background: white; 
+            padding: 20px; 
+            border-radius: 10px; 
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1); 
+        }
+        .test-section { 
+            margin: 20px 0; 
+            padding: 20px; 
+            border: 1px solid #ddd; 
+            border-radius: 8px; 
+            background: #fafafa; 
+        }
+        .button { 
+            background: #4285f4; 
+            color: white; 
+            border: none; 
+            padding: 12px 24px; 
+            border-radius: 6px; 
+            cursor: pointer; 
+            margin: 8px; 
+            font-size: 14px; 
+        }
+        .button:hover { background: #3367d6; }
+        .button.success { background: #34a853; color: white; }
+        .button.warning { background: #fbbc04; color: #333; }
+        .result { 
+            background: #f8f9fa; 
+            padding: 15px; 
+            border-radius: 6px; 
+            margin-top: 15px; 
+            font-family: monospace; 
+            white-space: pre-wrap; 
+            border-left: 4px solid #4285f4; 
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .error { 
+            background: #fdf2f2; 
+            color: #d73a49; 
+            border-left-color: #d73a49; 
+        }
+        .success { 
+            background: #f0fff4; 
+            color: #28a745; 
+            border-left-color: #28a745; 
+        }
+        h1 { color: #333; text-align: center; }
+        h3 { color: #4285f4; border-bottom: 2px solid #4285f4; padding-bottom: 8px; }
+        .status { 
+            padding: 8px 16px; 
+            border-radius: 20px; 
+            font-size: 12px; 
+            font-weight: bold; 
+            margin: 10px 0;
+        }
+        .status.connected { background: #d4edda; color: #155724; }
+        .status.disconnected { background: #f8d7da; color: #721c24; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 Firebase Functions 테스트</h1>
+        
+        <!-- 연결 상태 -->
+        <div class="test-section">
+            <h3>📡 Firebase 연결</h3>
+            <div id="connectionStatus" class="status disconnected">미연결</div>
+            <button class="button" onclick="initializeFirebase()">Firebase 초기화</button>
+            <div id="initResult" class="result">Firebase 설정이 필요합니다</div>
+        </div>
+
+        <!-- 테스트 함수들 -->
+        <div class="test-section">
+            <h3>🔧 테스트 함수들</h3>
+            <button class="button success" onclick="test1()">1. test_simple (가장 기본)</button>
+            <button class="button success" onclick="test2()">2. test_auth (인증 테스트)</button>
+            <button class="button success" onclick="test3()">3. test_config (환경변수)</button>
+            <button class="button success" onclick="test4()">4. test_firestore (DB 테스트)</button>
+            <div id="testResult" class="result">테스트 결과가 여기에 표시됩니다</div>
+        </div>
+
+        <!-- 실제 함수들 -->
+        <div class="test-section">
+            <h3>🚀 실제 구독 함수들</h3>
+            <button class="button warning" onclick="testSubscription()">checkSubscriptionStatus</button>
+            <button class="button warning" onclick="testGetAll()">getAllSubscriptionStatuses</button>
+            <div id="subscriptionResult" class="result">구독 함수 결과가 여기에 표시됩니다</div>
+        </div>
+    </div>
+
+    <script>
+        let app, functions;
+        
+        function initializeFirebase() {
+            try {
+                // Firebase 설정 (실제 프로젝트 정보로 수정 필요)
+                const firebaseConfig = {
+                    apiKey: "AIzaSyARF9UnTtIinsWCmLnG6YX8OZatumrT1UE", // 여기에 실제 API Key 입력
+                    authDomain: "mylingowith.firebaseapp.com",
+                    projectId: "mylingowith",
+                };
+                
+                app = firebase.initializeApp(firebaseConfig);
+                functions = firebase.functions();
+                
+                
+                document.getElementById('connectionStatus').textContent = '연결됨';
+                document.getElementById('connectionStatus').className = 'status connected';
+                document.getElementById('initResult').className = 'result success';
+                document.getElementById('initResult').textContent = '✅ Firebase 초기화 완료!';
+                
+                console.log('Firebase 초기화 성공');
+            } catch (error) {
+                document.getElementById('initResult').className = 'result error';
+                document.getElementById('initResult').textContent = '❌ Firebase 초기화 실패: ' + error.message;
+                console.error('Firebase 초기화 오류:', error);
+            }
+        }
+        
+        function showResult(elementId, message, isError = false) {
+            const element = document.getElementById(elementId);
+            element.textContent = message;
+            element.className = isError ? 'result error' : 'result success';
+        }
+        
+        function test1() {
+            if (!functions) {
+                showResult('testResult', '❌ 먼저 Firebase를 초기화하세요', true);
+                return;
+            }
+            
+            showResult('testResult', '🔄 test_simple 테스트 중...');
+            
+            const testSimple = functions.httpsCallable('test_simple');
+            testSimple({message: "hello from browser", test: "data"})
+                .then((result) => {
+                    showResult('testResult', '✅ test_simple 성공!\n\n' + JSON.stringify(result.data, null, 2));
+                })
+                .catch((error) => {
+                    showResult('testResult', 
+                        '❌ test_simple 실패!\n\n' + 
+                        'Code: ' + error.code + '\n' +
+                        'Message: ' + error.message + '\n' +
+                        'Details: ' + JSON.stringify(error.details, null, 2), true);
+                });
+        }
+        
+        function test2() {
+            if (!functions) {
+                showResult('testResult', '❌ 먼저 Firebase를 초기화하세요', true);
+                return;
+            }
+            
+            showResult('testResult', '🔄 test_auth 테스트 중...');
+            
+            const testAuth = functions.httpsCallable('test_auth');
+            testAuth({test: "auth test", user: "browser_user"})
+                .then((result) => {
+                    showResult('testResult', '✅ test_auth 성공!\n\n' + JSON.stringify(result.data, null, 2));
+                })
+                .catch((error) => {
+                    showResult('testResult', 
+                        '❌ test_auth 실패!\n\n' + 
+                        'Code: ' + error.code + '\n' +
+                        'Message: ' + error.message + '\n' +
+                        'Details: ' + JSON.stringify(error.details, null, 2), true);
+                });
+        }
+        
+        function test3() {
+            if (!functions) {
+                showResult('testResult', '❌ 먼저 Firebase를 초기화하세요', true);
+                return;
+            }
+            
+            showResult('testResult', '🔄 test_config 테스트 중...');
+            
+            const testConfig = functions.httpsCallable('test_config');
+            testConfig({})
+                .then((result) => {
+                    showResult('testResult', '✅ test_config 성공!\n\n' + JSON.stringify(result.data, null, 2));
+                })
+                .catch((error) => {
+                    showResult('testResult', 
+                        '❌ test_config 실패!\n\n' + 
+                        'Code: ' + error.code + '\n' +
+                        'Message: ' + error.message + '\n' +
+                        'Details: ' + JSON.stringify(error.details, null, 2), true);
+                });
+        }
+        
+        function test4() {
+            if (!functions) {
+                showResult('testResult', '❌ 먼저 Firebase를 초기화하세요', true);
+                return;
+            }
+            
+            showResult('testResult', '🔄 test_firestore 테스트 중...');
+            
+            const testFirestore = functions.httpsCallable('test_firestore');
+            testFirestore({test: "firestore connection"})
+                .then((result) => {
+                    showResult('testResult', '✅ test_firestore 성공!\n\n' + JSON.stringify(result.data, null, 2));
+                })
+                .catch((error) => {
+                    showResult('testResult', 
+                        '❌ test_firestore 실패!\n\n' + 
+                        'Code: ' + error.code + '\n' +
+                        'Message: ' + error.message + '\n' +
+                        'Details: ' + JSON.stringify(error.details, null, 2), true);
+                });
+        }
+        
+        function testSubscription() {
+            if (!functions) {
+                showResult('subscriptionResult', '❌ 먼저 Firebase를 초기화하세요', true);
+                return;
+            }
+            
+            showResult('subscriptionResult', '🔄 checkSubscriptionStatus 테스트 중...');
+            
+            const checkStatus = functions.httpsCallable('sub_checkSubscriptionStatus');
+            checkStatus({})
+                .then((result) => {
+                    showResult('subscriptionResult', '✅ checkSubscriptionStatus 성공!\n\n' + JSON.stringify(result.data, null, 2));
+                })
+                .catch((error) => {
+                    showResult('subscriptionResult', 
+                        '❌ checkSubscriptionStatus 실패!\n\n' + 
+                        'Code: ' + error.code + '\n' +
+                        'Message: ' + error.message + '\n' +
+                        'Details: ' + JSON.stringify(error.details, null, 2), true);
+                });
+        }
+        
+        function testGetAll() {
+            if (!functions) {
+                showResult('subscriptionResult', '❌ 먼저 Firebase를 초기화하세요', true);
+                return;
+            }
+            
+            showResult('subscriptionResult', '🔄 getAllSubscriptionStatuses 테스트 중...');
+            
+            const getAllStatus = functions.httpsCallable('sub_getAllSubscriptionStatuses');
+            getAllStatus({originalTransactionId: "test-transaction-id"})
+                .then((result) => {
+                    showResult('subscriptionResult', '✅ getAllSubscriptionStatuses 성공!\n\n' + JSON.stringify(result.data, null, 2));
+                })
+                .catch((error) => {
+                    showResult('subscriptionResult', 
+                        '❌ getAllSubscriptionStatuses 실패!\n\n' + 
+                        'Code: ' + error.code + '\n' +
+                        'Message: ' + error.message + '\n' +
+                        'Details: ' + JSON.stringify(error.details, null, 2), true);
+                });
+        }
+    </script>
+</body>
+</html>
