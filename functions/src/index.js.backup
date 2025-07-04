@@ -29,33 +29,6 @@ const APP_STORE_VALIDATION_URL = "https://buy.itunes.apple.com/verifyReceipt";
 const APP_STORE_SANDBOX_URL = "https://sandbox.itunes.apple.com/verifyReceipt";
 
 /**
- * 🔥 간단한 테스트 함수 (Firebase v2)
- */
-exports.test_simple = onCall(async (request) => {
-  console.log("=== test_simple v2 함수 시작 ===");
-  console.log("받은 데이터:", request.data);
-
-  try {
-    return {
-      success: true,
-      message: "✅ Firebase Functions v2 테스트 성공!",
-      timestamp: new Date().toISOString(),
-      receivedData: request.data,
-      version: "v2",
-      serverTime: new Date().toLocaleString("ko-KR", {
-        timeZone: "Asia/Seoul",
-      }),
-    };
-  } catch (error) {
-    console.error("test_simple 오류:", error);
-    return {
-      success: false,
-      error: error.message,
-    };
-  }
-});
-
-/**
  * 🔥 인증 테스트 함수 (Firebase v2)
  */
 exports.test_auth = onCall(async (request) => {

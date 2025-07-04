@@ -11,7 +11,7 @@ setGlobalOptions({
   maxInstances: 10,
   memory: "256MiB",
   timeoutSeconds: 60,
-  region: "asia-southeast1",
+  region: "us-central1",
 });
 
 // Secrets 정의
@@ -83,8 +83,6 @@ function checkInternalTestAccount(email) {
       autoRenewStatus: true,
       expirationDate: getDateAfterYears(1),
       description: "관리자 계정 (프리미엄 활성)",
-      hasEverUsedTrial: false,
-      hasEverUsedPremium: true,
       usage: {
         ttsCount: 50,
         noteCount: 10,
@@ -100,8 +98,6 @@ function checkInternalTestAccount(email) {
       autoRenewStatus: true,
       expirationDate: getDateAfterYears(1),
       description: "개발자 계정 (프리미엄 활성)",
-      hasEverUsedTrial: false,
-      hasEverUsedPremium: true,
       usage: {
         ttsCount: 100,
         noteCount: 25,
@@ -118,8 +114,6 @@ function checkInternalTestAccount(email) {
       autoRenewStatus: true,
       expirationDate: getDateAfterDays(7),
       description: "체험 계정 (7일 체험 중)",
-      hasEverUsedTrial: true,
-      hasEverUsedPremium: false,
       usage: {
         ttsCount: 20,
         noteCount: 5,
@@ -186,8 +180,6 @@ function checkInternalTestAccount(email) {
       autoRenewStatus: false,
       expirationDate: null,
       description: "무료 계정 (사용량 한도 초과)",
-      hasEverUsedTrial: false,
-      hasEverUsedPremium: false,
       usage: {
         ttsCount: 55,
         noteCount: 12,
@@ -203,8 +195,6 @@ function checkInternalTestAccount(email) {
       autoRenewStatus: true,
       expirationDate: getDateAfterMonths(1),
       description: "프리미엄 계정 (사용량 한도 초과)",
-      hasEverUsedTrial: false,
-      hasEverUsedPremium: true,
       usage: {
         ttsCount: 1050,
         noteCount: 250,
@@ -475,31 +465,17 @@ function generateServerJWT() {
  * @param {string} productId
  * @return {string}
  */
-/**
- * 구독 플랜 타입 결정 (무료 체험 혜택 고려)
- * @param {string} productId
- * @param {object} transactionInfo - 거래 정보 (무료 체험 확인용)
- * @return {string}
- */
-function determinePlanType(productId, transactionInfo = {}) {
-  // 무료 체험 중인지 확인 (실제 API 응답 필드 기준)
-  const isInIntroOfferPeriod = transactionInfo.isInIntroOfferPeriod;
-  const offerIdentifier = transactionInfo.offerIdentifier;
-  
-  if (productId.includes("monthly") || productId.includes("premium_monthly")) {
-    // premium_monthly인데 무료 체험 중이면 trial로 분류
-    if (isInIntroOfferPeriod === true || offerIdentifier) {
-      return "trial"; // 무료 체험 중
-    }
-    return "premium_monthly"; // 정상 월구독
-  } else if (productId.includes("yearly") || productId.includes("premium_yearly")) {
-    // premium_yearly인데 무료 체험 중이면 trial로 분류
-    if (isInIntroOfferPeriod === true || offerIdentifier) {
-      return "trial"; // 무료 체험 중
-    }
-    return "premium_yearly"; // 정상 연구독
+function determinePlanType(productId) {
+  if (productId.includes("trial") || productId.includes("free_trial")) {
+    return "trial"; // 체험 (월구독 프리미엄 7일 무료체험)
+  } else if (productId.includes("monthly") ||
+             productId.includes("premium_monthly")) {
+    return "premium_monthly"; // 프리미엄 (월구독)
+  } else if (productId.includes("yearly") ||
+             productId.includes("premium_yearly")) {
+    return "premium_yearly"; // 프리미엄 (연구독)
   } else {
-    return "free"; // 무료
+    return "free"; // 무료 (적은 사용량)
   }
 }
 
@@ -565,11 +541,11 @@ exports.sub_getAllSubscriptionStatuses = onCall({
         isActive = true;
         expirationDate = lastTransaction.expiresDate;
         autoRenewStatus = lastTransaction.autoRenewStatus === 1;
-        currentPlan = determinePlanType(lastTransaction.productId, lastTransaction);
+        currentPlan = determinePlanType(lastTransaction.productId);
         break;
       } else if (status === 4) { // Billing Grace Period
         isActive = true;
-        currentPlan = determinePlanType(lastTransaction.productId, lastTransaction);
+        currentPlan = determinePlanType(lastTransaction.productId);
         break;
       }
     }
@@ -836,30 +812,20 @@ async function checkAppStoreConnect(originalTransactionId) {
         isActive = true;
         expirationDate = lastTransaction.expiresDate;
         autoRenewStatus = lastTransaction.autoRenewStatus === 1;
-        currentPlan = determinePlanType(lastTransaction.productId, lastTransaction);
+        currentPlan = determinePlanType(lastTransaction.productId);
         break;
       } else if (status === 4) { // Billing Grace Period
         isActive = true;
-        currentPlan = determinePlanType(lastTransaction.productId, lastTransaction);
+        currentPlan = determinePlanType(lastTransaction.productId);
         break;
       }
     }
 
-    // 무료체험 여부 판단 (App Store Connect 기반)
-    const isFreeTrial = currentPlan === "trial";
-    
-    // 🎯 이력 정보 판단 (현재 구독 상태 기반)
-    const hasEverUsedTrial = isFreeTrial || currentPlan === "trial";
-    const hasEverUsedPremium = (currentPlan === "premium" || currentPlan === "premium_monthly" || currentPlan === "premium_yearly") && !isFreeTrial;
-
     return {
       currentPlan: currentPlan,
       isActive: isActive,
-      isFreeTrial: isFreeTrial,              // ✅ 추가
       expirationDate: expirationDate,
       autoRenewStatus: autoRenewStatus,
-      hasEverUsedTrial: hasEverUsedTrial,    // ✅ 추가
-      hasEverUsedPremium: hasEverUsedPremium, // ✅ 추가
     };
   } catch (error) {
     console.log(`⚠️ App Store Connect 확인 실패: ${error.message}`);
