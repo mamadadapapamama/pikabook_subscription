@@ -1,10 +1,10 @@
 // Firebase Functions v2 with Secrets Manager
-const {onCall, onRequest, HttpsError} = require("firebase-functions/v2/https");
+const {onCall, HttpsError} = require("firebase-functions/v2/https");
 const {defineSecret} = require("firebase-functions/params");
 const {setGlobalOptions} = require("firebase-functions/v2");
 const admin = require("firebase-admin");
-const jwt = require("jsonwebtoken");
 const axios = require("axios");
+const jwt = require("jsonwebtoken");
 
 // 글로벌 설정
 setGlobalOptions({
@@ -25,174 +25,215 @@ admin.initializeApp();
 
 // API URLs
 const APP_STORE_SERVER_API_URL = "https://api.storekit.itunes.apple.com";
-const APP_STORE_VALIDATION_URL = "https://buy.itunes.apple.com/verifyReceipt";
-const APP_STORE_SANDBOX_URL = "https://sandbox.itunes.apple.com/verifyReceipt";
 
-// 🎯 향상된 내부 테스트 계정 시스템
+// 날짜 유틸 함수들
+/**
+ * @param {number} years
+ * @return {Date}
+ */
+function getDateAfterYears(years) {
+  const d = new Date();
+  d.setFullYear(d.getFullYear() + years);
+  return d;
+}
+/**
+ * @param {number} months
+ * @return {Date}
+ */
+function getDateAfterMonths(months) {
+  const d = new Date();
+  d.setMonth(d.getMonth() + months);
+  return d;
+}
+/**
+ * @param {number} days
+ * @return {Date}
+ */
+function getDateAfterDays(days) {
+  const d = new Date();
+  d.setDate(d.getDate() + days);
+  return d;
+}
+/**
+ * @param {number} days
+ * @return {Date}
+ */
+function getDateBeforeDays(days) {
+  const d = new Date();
+  d.setDate(d.getDate() - days);
+  return d;
+}
+
+// 🖥️ 향상된 내부 테스트 계정 시스템
+/**
+ * 내부 테스트 계정 체크
+ * @param {string} email
+ * @return {object|null}
+ */
 function checkInternalTestAccount(email) {
   if (!email) return null;
 
-  // 📋 내부 테스트 계정 설정 (이메일별로 다른 상태)
+  // 🟢 프리미엄 활성 계정들
   const INTERNAL_TEST_ACCOUNTS = {
     // 🟢 프리미엄 활성 계정들
-    'admin@pikabook.com': {
-      currentPlan: 'premium',
+    "admin@pikabook.com": {
+      currentPlan: "premium",
       isActive: true,
       isFreeTrial: false,
       autoRenewStatus: true,
       expirationDate: getDateAfterYears(1),
-      description: '관리자 계정 (프리미엄 활성)',
+      description: "관리자 계정 (프리미엄 활성)",
       usage: {
         ttsCount: 50,
         noteCount: 10,
         monthlyLimit: 1000,
-        isLimitExceeded: false
-      }
+        isLimitExceeded: false,
+      },
     },
-    
-    'developer@pikabook.com': {
-      currentPlan: 'premium',
+
+    "developer@pikabook.com": {
+      currentPlan: "premium",
       isActive: true,
       isFreeTrial: false,
       autoRenewStatus: true,
       expirationDate: getDateAfterYears(1),
-      description: '개발자 계정 (프리미엄 활성)',
+      description: "개발자 계정 (프리미엄 활성)",
       usage: {
         ttsCount: 100,
         noteCount: 25,
         monthlyLimit: 1000,
-        isLimitExceeded: false
-      }
+        isLimitExceeded: false,
+      },
     },
 
     // 🔵 체험 계정들
-    'trial@pikabook.com': {
-      currentPlan: 'trial',
+    "trial@pikabook.com": {
+      currentPlan: "trial",
       isActive: true,
       isFreeTrial: true,
       autoRenewStatus: true,
       expirationDate: getDateAfterDays(7),
-      description: '체험 계정 (7일 체험 중)',
+      description: "체험 계정 (7일 체험 중)",
       usage: {
         ttsCount: 20,
         noteCount: 5,
         monthlyLimit: 1000,
-        isLimitExceeded: false
-      }
+        isLimitExceeded: false,
+      },
     },
 
-    'trial-expired@pikabook.com': {
-      currentPlan: 'free',
+    "trial-expired@pikabook.com": {
+      currentPlan: "free",
       isActive: false,
       isFreeTrial: false,
       autoRenewStatus: false,
       expirationDate: getDateBeforeDays(1),
-      description: '체험 만료 계정 (체험 끝남)',
+      description: "체험 만료 계정 (체험 끝남)",
       hasEverUsedTrial: true,
       usage: {
         ttsCount: 15,
         noteCount: 3,
         monthlyLimit: 50,
-        isLimitExceeded: false
-      }
+        isLimitExceeded: false,
+      },
     },
 
     // 🟡 프리미엄 만료 계정들
-    'premium-expired@pikabook.com': {
-      currentPlan: 'free',
+    "premium-expired@pikabook.com": {
+      currentPlan: "free",
       isActive: false,
       isFreeTrial: false,
       autoRenewStatus: false,
       expirationDate: getDateBeforeDays(3),
-      description: '프리미엄 만료 계정 (구독 끝남)',
+      description: "프리미엄 만료 계정 (구독 끝남)",
       hasEverUsedPremium: true,
       usage: {
         ttsCount: 40,
         noteCount: 8,
         monthlyLimit: 50,
-        isLimitExceeded: false
-      }
+        isLimitExceeded: false,
+      },
     },
 
-    'premium-grace@pikabook.com': {
-      currentPlan: 'premium',
+    "premium-grace@pikabook.com": {
+      currentPlan: "premium",
       isActive: true,
       isFreeTrial: false,
       autoRenewStatus: false,
       expirationDate: getDateBeforeDays(5),
       gracePeriodEnd: getDateAfterDays(11), // 16일 Grace Period
-      description: '프리미엄 Grace Period 계정 (결제 실패)',
+      description: "프리미엄 Grace Period 계정 (결제 실패)",
       hasEverUsedPremium: true,
       usage: {
         ttsCount: 80,
         noteCount: 15,
         monthlyLimit: 1000,
-        isLimitExceeded: false
-      }
+        isLimitExceeded: false,
+      },
     },
 
     // 🔴 사용량 한도 초과 계정들
-    'limit-exceeded@pikabook.com': {
-      currentPlan: 'free',
+    "limit-exceeded@pikabook.com": {
+      currentPlan: "free",
       isActive: false,
       isFreeTrial: false,
       autoRenewStatus: false,
       expirationDate: null,
-      description: '무료 계정 (사용량 한도 초과)',
+      description: "무료 계정 (사용량 한도 초과)",
       usage: {
         ttsCount: 55,
         noteCount: 12,
         monthlyLimit: 50,
-        isLimitExceeded: true
-      }
+        isLimitExceeded: true,
+      },
     },
 
-    'premium-limit-exceeded@pikabook.com': {
-      currentPlan: 'premium',
+    "premium-limit-exceeded@pikabook.com": {
+      currentPlan: "premium",
       isActive: true,
       isFreeTrial: false,
       autoRenewStatus: true,
       expirationDate: getDateAfterMonths(1),
-      description: '프리미엄 계정 (사용량 한도 초과)',
+      description: "프리미엄 계정 (사용량 한도 초과)",
       usage: {
         ttsCount: 1050,
         noteCount: 250,
         monthlyLimit: 1000,
-        isLimitExceeded: true
-      }
+        isLimitExceeded: true,
+      },
     },
 
     // 🟠 특수 테스트 계정들
-    'reviewer@pikabook.com': {
-      currentPlan: 'premium',
+    "reviewer@pikabook.com": {
+      currentPlan: "premium",
       isActive: true,
       isFreeTrial: false,
       autoRenewStatus: true,
       expirationDate: getDateAfterYears(1),
-      description: '앱스토어 심사용 계정 (프리미엄)',
+      description: "앱스토어 심사용 계정 (프리미엄)",
       usage: {
         ttsCount: 10,
         noteCount: 2,
         monthlyLimit: 1000,
-        isLimitExceeded: false
-      }
+        isLimitExceeded: false,
+      },
     },
 
-    'test-cancel@pikabook.com': {
-      currentPlan: 'premium',
+    "test-cancel@pikabook.com": {
+      currentPlan: "premium",
       isActive: true,
       isFreeTrial: false,
       autoRenewStatus: false, // 취소 예정
       expirationDate: getDateAfterDays(15),
-      description: '구독 취소 예정 계정 (자동갱신 OFF)',
+      description: "구독 취소 예정 계정 (자동갱신 OFF)",
       hasEverUsedPremium: true,
       usage: {
         ttsCount: 200,
         noteCount: 45,
         monthlyLimit: 1000,
-        isLimitExceeded: false
-      }
-    }
+        isLimitExceeded: false,
+      },
+    },
   };
 
   // 계정 정보 조회
@@ -202,13 +243,13 @@ function checkInternalTestAccount(email) {
   }
 
   console.log(`🧪 [내부 계정] ${accountInfo.description}: ${email}`);
-  
+
   // 공통 정보 추가
   const result = {
     ...accountInfo,
-    dataSource: 'internal_test_account',
-    testAccountType: email.split('@')[0], // 이메일 prefix를 타입으로 사용
-    lastUpdated: new Date().toISOString()
+    dataSource: "internal_test_account",
+    testAccountType: email.split("@")[0], // 이메일 prefix를 타입으로 사용
+    lastUpdated: new Date().toISOString(),
   };
 
   // 날짜를 타임스탬프로 변환
@@ -421,9 +462,8 @@ function generateServerJWT() {
 }
 
 /**
- * 플랜 유형 판별 헬퍼 함수
- * @param {string} productId 제품 ID
- * @return {string} 플랜 타입
+ * @param {string} productId
+ * @return {string}
  */
 function determinePlanType(productId) {
   if (productId.includes("trial") || productId.includes("free_trial")) {
@@ -470,7 +510,8 @@ exports.sub_getAllSubscriptionStatuses = onCall({
     const token = generateServerJWT();
 
     const apiUrl = APP_STORE_SERVER_API_URL +
-      "/inApps/v1/subscriptions/" + originalTransactionId;
+      "/inApps/v1/subscriptions/" +
+      originalTransactionId;
 
     const response = await axios.get(apiUrl, {
       headers: {
@@ -615,7 +656,7 @@ exports.sub_checkSubscriptionStatus = onCall({
 
     const userId = request.auth.uid;
     const email = request.auth.token?.email; // 이메일 추가
-    
+
     console.log(`🔍 구독 상태 확인 시작 (userId: ${userId}, email: ${email})`);
 
     // 🎯 Step 1: 내부 테스트 계정 확인 (최우선)
@@ -633,30 +674,43 @@ exports.sub_checkSubscriptionStatus = onCall({
     let {originalTransactionId, appStoreFirst} = request.data;
 
     let subscriptionData = null;
-    let dataSource = 'unknown';
+    let dataSource = "unknown";
 
     // 🎯 Step 2: App Store Connect 우선 확인 (appStoreFirst = true일 때)
     if (appStoreFirst) {
       try {
         console.log(`🔍 App Store Connect 우선 확인 시작 (userId: ${userId})`);
-        
+
         // originalTransactionId가 없으면 Firestore에서 조회
         if (!originalTransactionId) {
           const db = admin.firestore();
           const userDoc = await db.collection("users").doc(userId).get();
           if (userDoc.exists) {
             const userData = userDoc.data();
-            originalTransactionId = userData?.subscription?.originalTransactionId;
+            originalTransactionId =
+              userData && userData.subscription ?
+                userData.subscription.originalTransactionId :
+                undefined;
           }
         }
 
         // App Store Connect API 호출 (프리미엄/체험 정보)
         if (originalTransactionId) {
-          const appStoreData = await checkAppStoreConnect(originalTransactionId);
-          if (appStoreData && (appStoreData.currentPlan === 'premium' || appStoreData.currentPlan === 'trial')) {
+          const appStoreData = await checkAppStoreConnect(
+            originalTransactionId,
+          );
+          if (
+            appStoreData &&
+            (
+              appStoreData.currentPlan === "premium" ||
+              appStoreData.currentPlan === "trial"
+            )
+          ) {
             subscriptionData = appStoreData;
-            dataSource = 'appstore';
-            console.log(`✅ App Store Connect에서 구독 정보 발견: ${subscriptionData.currentPlan}`);
+            dataSource = "appstore";
+            console.log(
+              `✅ App Store Connect에서 구독 정보 발견: ${subscriptionData.currentPlan}`,
+            );
           }
         }
       } catch (error) {
@@ -672,14 +726,14 @@ exports.sub_checkSubscriptionStatus = onCall({
         if (userDoc.exists) {
           const userData = userDoc.data();
           subscriptionData = {
-            currentPlan: userData.currentPlan || 'free',
+            currentPlan: userData.currentPlan || "free",
             isActive: userData.isActive || false,
             expirationDate: userData.expirationDate,
             autoRenewStatus: userData.autoRenewStatus || false,
             hasEverUsedTrial: userData.hasEverUsedTrial || false,
             hasEverUsedPremium: userData.hasEverUsedPremium || false,
           };
-          dataSource = 'firebase';
+          dataSource = "firebase";
           console.log(`📱 Firebase에서 구독 정보 사용: ${subscriptionData.currentPlan}`);
         }
       } catch (error) {
@@ -690,12 +744,12 @@ exports.sub_checkSubscriptionStatus = onCall({
     // 🎯 Step 4: 둘 다 없으면 기본값
     if (!subscriptionData) {
       subscriptionData = {
-        currentPlan: 'free',
+        currentPlan: "free",
         isActive: false,
         hasEverUsedTrial: false,
         hasEverUsedPremium: false,
       };
-      dataSource = 'default';
+      dataSource = "default";
       console.log(`📝 기본값으로 구독 정보 설정: ${subscriptionData.currentPlan}`);
     }
 
@@ -705,26 +759,30 @@ exports.sub_checkSubscriptionStatus = onCall({
       dataSource: dataSource, // 클라이언트에서 데이터 소스 확인 가능
       version: "v2",
     };
-
   } catch (error) {
-    console.error('구독 상태 확인 오류:', error);
+    console.error("구독 상태 확인 오류:", error);
     return {
       success: false,
       error: error.message,
-      dataSource: 'error',
+      dataSource: "error",
       version: "v2",
     };
   }
 });
 
-// App Store Connect API 호출 함수
+/**
+ * App Store Connect API를 통해 구독 상태를 조회합니다.
+ * @param {string} originalTransactionId
+ * @return {Promise<object|null>}
+ */
 async function checkAppStoreConnect(originalTransactionId) {
   try {
     // JWT 토큰 생성
     const token = generateServerJWT();
 
     const apiUrl = APP_STORE_SERVER_API_URL +
-      "/inApps/v1/subscriptions/" + originalTransactionId;
+      "/inApps/v1/subscriptions/" +
+      originalTransactionId;
 
     const response = await axios.get(apiUrl, {
       headers: {
@@ -769,228 +827,14 @@ async function checkAppStoreConnect(originalTransactionId) {
       expirationDate: expirationDate,
       autoRenewStatus: autoRenewStatus,
     };
-
   } catch (error) {
-    console.log(`App Store Connect API 호출 실패: ${error.message}`);
+    console.log(`⚠️ App Store Connect 확인 실패: ${error.message}`);
     return null;
   }
 }
 
-/**
- * 🔥 App Store 영수증 검증 함수 (Firebase v2 with Secrets)
- */
-exports.sub_validateAppStoreReceipt = onCall({
-  secrets: [appstoreBundleId],
-}, async (request) => {
-  try {
-    if (!request.auth) {
-      throw new HttpsError(
-        "unauthenticated",
-        "User must be authenticated",
-      );
-    }
-
-    const {receiptData, isProduction = true} = request.data;
-
-    if (!receiptData) {
-      throw new HttpsError(
-        "invalid-argument",
-        "receiptData is required",
-      );
-    }
-
-    const bundleId = appstoreBundleId.value();
-    const validationUrl = isProduction ?
-      APP_STORE_VALIDATION_URL :
-      APP_STORE_SANDBOX_URL;
-
-    // App Store 영수증 검증 요청
-    const requestBody = {
-      "receipt-data": receiptData,
-      "password": "", // Auto-renewable subscription의 경우 shared secret 필요
-      "exclude-old-transactions": true,
-    };
-
-    let response = await axios.post(validationUrl, requestBody, {
-      timeout: 10000,
-    });
-
-    // 샌드박스에서 실패한 경우 프로덕션으로 재시도
-    if (response.data.status === 21007 && isProduction) {
-      response = await axios.post(APP_STORE_SANDBOX_URL, requestBody, {
-        timeout: 10000,
-      });
-    }
-
-    const receiptInfo = response.data;
-
-    // 영수증 검증 결과 확인
-    if (receiptInfo.status !== 0) {
-      const status = receiptInfo.status;
-      const errorMsg = "Receipt validation failed with status: " + status;
-      throw new HttpsError(
-        "invalid-argument",
-        errorMsg,
-      );
-    }
-
-    // Bundle ID 확인
-    if (receiptInfo.receipt?.bundle_id !== bundleId) {
-      throw new HttpsError(
-        "invalid-argument",
-        "Bundle ID mismatch",
-      );
-    }
-
-    // 구독 정보 추출
-    const latestReceiptInfo = receiptInfo.latest_receipt_info || [];
-    const pendingRenewalInfo = receiptInfo.pending_renewal_info || [];
-
-    // 활성 구독 확인
-    const now = Date.now();
-    const activeSubscriptions = latestReceiptInfo.filter((transaction) => {
-      const expiresDate = parseInt(transaction.expires_date_ms);
-      return expiresDate > now;
-    });
-
-    return {
-      success: true,
-      isValid: true,
-      hasActiveSubscription: activeSubscriptions.length > 0,
-      subscriptions: activeSubscriptions,
-      pendingRenewalInfo: pendingRenewalInfo,
-      originalTransactionId:
-          latestReceiptInfo[0]?.original_transaction_id,
-      version: "v2",
-    };
-  } catch (error) {
-    console.error("Error validating receipt:", error);
-
-    if (error instanceof HttpsError) {
-      throw error;
-    }
-
-    throw new HttpsError(
-      "internal",
-      "Failed to validate receipt",
-    );
-  }
-});
-
-/**
- * 🔥 구매 완료 알림 처리 함수 (Firebase v2)
- */
-exports.sub_notifyPurchaseComplete = onCall(async (request) => {
-  try {
-    if (!request.auth) {
-      throw new HttpsError(
-        "unauthenticated",
-        "User must be authenticated",
-      );
-    }
-
-    const {
-      transactionId,
-      originalTransactionId,
-      productId,
-      purchaseDate,
-      expirationDate,
-    } = request.data;
-
-    if (!transactionId || !originalTransactionId || !productId) {
-      throw new HttpsError(
-        "invalid-argument",
-        "Required purchase data is missing",
-      );
-    }
-
-    const userId = request.auth.uid;
-    const db = admin.firestore();
-
-    // 구매 정보를 Firestore에 저장
-    const purchaseData = {
-      userId: userId,
-      transactionId: transactionId,
-      originalTransactionId: originalTransactionId,
-      productId: productId,
-      purchaseDate: purchaseDate ?
-        admin.firestore.Timestamp.fromDate(new Date(purchaseDate)) :
-        admin.firestore.FieldValue.serverTimestamp(),
-      expirationDate: expirationDate ?
-        admin.firestore.Timestamp.fromDate(new Date(expirationDate)) :
-        null,
-      platform: "ios",
-      status: "active",
-      createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      version: "v2",
-    };
-
-    // 트랜잭션으로 데이터 저장
-    await db.runTransaction(async (transaction) => {
-      // 🔍 먼저 모든 읽기 작업 수행
-      const userRef = db.collection("users").doc(userId);
-      const userDoc = await transaction.get(userRef);
-
-      // ✍️ 그 다음에 모든 쓰기 작업 수행
-      
-      // 구매 기록 저장
-      const purchaseRef = db.collection("purchases").doc(transactionId);
-      transaction.set(purchaseRef, purchaseData);
-
-      // 사용자 구독 상태 업데이트
-
-      const subscriptionData = {
-        hasActiveSubscription: true,
-        currentProductId: productId,
-        originalTransactionId: originalTransactionId,
-        expirationDate: expirationDate ?
-          admin.firestore.Timestamp.fromDate(new Date(expirationDate)) :
-          null,
-        lastUpdated: admin.firestore.FieldValue.serverTimestamp(),
-        version: "v2",
-      };
-
-      if (userDoc.exists) {
-        transaction.update(userRef, {
-          subscription: subscriptionData,
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-      } else {
-        transaction.set(userRef, {
-          subscription: subscriptionData,
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-      }
-    });
-
-    const logMessage = "Purchase completed for user " + userId +
-      ", transaction " + transactionId;
-    console.log(logMessage);
-
-    return {
-      success: true,
-      message: "Purchase notification processed successfully",
-      transactionId: transactionId,
-      version: "v2",
-    };
-  } catch (error) {
-    console.error("Error processing purchase notification:", error);
-
-    if (error instanceof HttpsError) {
-      throw error;
-    }
-
-    throw new HttpsError(
-      "internal",
-      "Failed to process purchase notification",
-    );
-  }
-});
-
 // App Store Server Notifications 웹훅 import
-const notificationWebhook = require('./notification_webhook');
+const notificationWebhook = require("./notification_webhook");
 
 // 웹훅 함수 export
 exports.appStoreNotifications = notificationWebhook.appStoreNotifications;
