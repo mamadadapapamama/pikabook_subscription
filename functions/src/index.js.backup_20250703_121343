@@ -28,200 +28,6 @@ const APP_STORE_SERVER_API_URL = "https://api.storekit.itunes.apple.com";
 const APP_STORE_VALIDATION_URL = "https://buy.itunes.apple.com/verifyReceipt";
 const APP_STORE_SANDBOX_URL = "https://sandbox.itunes.apple.com/verifyReceipt";
 
-// 🎯 향상된 내부 테스트 계정 시스템
-function checkInternalTestAccount(email) {
-  if (!email) return null;
-
-  // 📋 내부 테스트 계정 설정 (이메일별로 다른 상태)
-  const INTERNAL_TEST_ACCOUNTS = {
-    // 🟢 프리미엄 활성 계정들
-    'admin@pikabook.com': {
-      currentPlan: 'premium',
-      isActive: true,
-      isFreeTrial: false,
-      autoRenewStatus: true,
-      expirationDate: getDateAfterYears(1),
-      description: '관리자 계정 (프리미엄 활성)',
-      usage: {
-        ttsCount: 50,
-        noteCount: 10,
-        monthlyLimit: 1000,
-        isLimitExceeded: false
-      }
-    },
-    
-    'developer@pikabook.com': {
-      currentPlan: 'premium',
-      isActive: true,
-      isFreeTrial: false,
-      autoRenewStatus: true,
-      expirationDate: getDateAfterYears(1),
-      description: '개발자 계정 (프리미엄 활성)',
-      usage: {
-        ttsCount: 100,
-        noteCount: 25,
-        monthlyLimit: 1000,
-        isLimitExceeded: false
-      }
-    },
-
-    // 🔵 체험 계정들
-    'trial@pikabook.com': {
-      currentPlan: 'trial',
-      isActive: true,
-      isFreeTrial: true,
-      autoRenewStatus: true,
-      expirationDate: getDateAfterDays(7),
-      description: '체험 계정 (7일 체험 중)',
-      usage: {
-        ttsCount: 20,
-        noteCount: 5,
-        monthlyLimit: 1000,
-        isLimitExceeded: false
-      }
-    },
-
-    'trial-expired@pikabook.com': {
-      currentPlan: 'free',
-      isActive: false,
-      isFreeTrial: false,
-      autoRenewStatus: false,
-      expirationDate: getDateBeforeDays(1),
-      description: '체험 만료 계정 (체험 끝남)',
-      hasEverUsedTrial: true,
-      usage: {
-        ttsCount: 15,
-        noteCount: 3,
-        monthlyLimit: 50,
-        isLimitExceeded: false
-      }
-    },
-
-    // 🟡 프리미엄 만료 계정들
-    'premium-expired@pikabook.com': {
-      currentPlan: 'free',
-      isActive: false,
-      isFreeTrial: false,
-      autoRenewStatus: false,
-      expirationDate: getDateBeforeDays(3),
-      description: '프리미엄 만료 계정 (구독 끝남)',
-      hasEverUsedPremium: true,
-      usage: {
-        ttsCount: 40,
-        noteCount: 8,
-        monthlyLimit: 50,
-        isLimitExceeded: false
-      }
-    },
-
-    'premium-grace@pikabook.com': {
-      currentPlan: 'premium',
-      isActive: true,
-      isFreeTrial: false,
-      autoRenewStatus: false,
-      expirationDate: getDateBeforeDays(5),
-      gracePeriodEnd: getDateAfterDays(11), // 16일 Grace Period
-      description: '프리미엄 Grace Period 계정 (결제 실패)',
-      hasEverUsedPremium: true,
-      usage: {
-        ttsCount: 80,
-        noteCount: 15,
-        monthlyLimit: 1000,
-        isLimitExceeded: false
-      }
-    },
-
-    // 🔴 사용량 한도 초과 계정들
-    'limit-exceeded@pikabook.com': {
-      currentPlan: 'free',
-      isActive: false,
-      isFreeTrial: false,
-      autoRenewStatus: false,
-      expirationDate: null,
-      description: '무료 계정 (사용량 한도 초과)',
-      usage: {
-        ttsCount: 55,
-        noteCount: 12,
-        monthlyLimit: 50,
-        isLimitExceeded: true
-      }
-    },
-
-    'premium-limit-exceeded@pikabook.com': {
-      currentPlan: 'premium',
-      isActive: true,
-      isFreeTrial: false,
-      autoRenewStatus: true,
-      expirationDate: getDateAfterMonths(1),
-      description: '프리미엄 계정 (사용량 한도 초과)',
-      usage: {
-        ttsCount: 1050,
-        noteCount: 250,
-        monthlyLimit: 1000,
-        isLimitExceeded: true
-      }
-    },
-
-    // 🟠 특수 테스트 계정들
-    'reviewer@pikabook.com': {
-      currentPlan: 'premium',
-      isActive: true,
-      isFreeTrial: false,
-      autoRenewStatus: true,
-      expirationDate: getDateAfterYears(1),
-      description: '앱스토어 심사용 계정 (프리미엄)',
-      usage: {
-        ttsCount: 10,
-        noteCount: 2,
-        monthlyLimit: 1000,
-        isLimitExceeded: false
-      }
-    },
-
-    'test-cancel@pikabook.com': {
-      currentPlan: 'premium',
-      isActive: true,
-      isFreeTrial: false,
-      autoRenewStatus: false, // 취소 예정
-      expirationDate: getDateAfterDays(15),
-      description: '구독 취소 예정 계정 (자동갱신 OFF)',
-      hasEverUsedPremium: true,
-      usage: {
-        ttsCount: 200,
-        noteCount: 45,
-        monthlyLimit: 1000,
-        isLimitExceeded: false
-      }
-    }
-  };
-
-  // 계정 정보 조회
-  const accountInfo = INTERNAL_TEST_ACCOUNTS[email];
-  if (!accountInfo) {
-    return null;
-  }
-
-  console.log(`🧪 [내부 계정] ${accountInfo.description}: ${email}`);
-  
-  // 공통 정보 추가
-  const result = {
-    ...accountInfo,
-    dataSource: 'internal_test_account',
-    testAccountType: email.split('@')[0], // 이메일 prefix를 타입으로 사용
-    lastUpdated: new Date().toISOString()
-  };
-
-  // 날짜를 타임스탬프로 변환
-  if (result.expirationDate) {
-    result.expirationDate = result.expirationDate.getTime().toString();
-  }
-  if (result.gracePeriodEnd) {
-    result.gracePeriodEnd = result.gracePeriodEnd.getTime().toString();
-  }
-
-  return result;
-}
-
 /**
  * 🔥 간단한 테스트 함수 (Firebase v2)
  */
@@ -613,114 +419,31 @@ exports.sub_checkSubscriptionStatus = onCall({
       );
     }
 
+    let {originalTransactionId} = request.data;
     const userId = request.auth.uid;
-    const email = request.auth.token?.email; // 이메일 추가
-    
-    console.log(`🔍 구독 상태 확인 시작 (userId: ${userId}, email: ${email})`);
 
-    // 🎯 Step 1: 내부 테스트 계정 확인 (최우선)
-    const testAccountResult = checkInternalTestAccount(email);
-    if (testAccountResult) {
-      console.log(`🧪 내부 테스트 계정으로 구독 상태 반환: ${testAccountResult.currentPlan}`);
-      return {
-        success: true,
-        subscription: testAccountResult,
-        version: "v2",
-      };
-    }
+    if (!originalTransactionId) {
+      // Firestore에서 사용자의 마지막 거래 ID 조회
+      const db = admin.firestore();
+      const userDoc = await db.collection("users").doc(userId).get();
 
-    // 기존 로직 계속...
-    let {originalTransactionId, appStoreFirst} = request.data;
-
-    let subscriptionData = null;
-    let dataSource = 'unknown';
-
-    // 🎯 Step 2: App Store Connect 우선 확인 (appStoreFirst = true일 때)
-    if (appStoreFirst) {
-      try {
-        console.log(`🔍 App Store Connect 우선 확인 시작 (userId: ${userId})`);
-        
-        // originalTransactionId가 없으면 Firestore에서 조회
-        if (!originalTransactionId) {
-          const db = admin.firestore();
-          const userDoc = await db.collection("users").doc(userId).get();
-          if (userDoc.exists) {
-            const userData = userDoc.data();
-            originalTransactionId = userData?.subscription?.originalTransactionId;
-          }
-        }
-
-        // App Store Connect API 호출 (프리미엄/체험 정보)
-        if (originalTransactionId) {
-          const appStoreData = await checkAppStoreConnect(originalTransactionId);
-          if (appStoreData && (appStoreData.currentPlan === 'premium' || appStoreData.currentPlan === 'trial')) {
-            subscriptionData = appStoreData;
-            dataSource = 'appstore';
-            console.log(`✅ App Store Connect에서 구독 정보 발견: ${subscriptionData.currentPlan}`);
-          }
-        }
-      } catch (error) {
-        console.log(`⚠️ App Store Connect 확인 실패: ${error.message}`);
+      const userData = userDoc.data();
+      const hasTransactionId = userData?.subscription?.originalTransactionId;
+      if (!userDoc.exists || !hasTransactionId) {
+        return {
+          success: true,
+          subscription: {
+            isActive: false,
+            currentPlan: "free",
+          },
+          version: "v2",
+        };
       }
+
+      originalTransactionId = userData.subscription.originalTransactionId;
     }
 
-    // 🎯 Step 3: App Store에 데이터가 없으면 Firebase에서 확인
-    if (!subscriptionData) {
-      try {
-        const db = admin.firestore();
-        const userDoc = await db.collection("users").doc(userId).get();
-        if (userDoc.exists) {
-          const userData = userDoc.data();
-          subscriptionData = {
-            currentPlan: userData.currentPlan || 'free',
-            isActive: userData.isActive || false,
-            expirationDate: userData.expirationDate,
-            autoRenewStatus: userData.autoRenewStatus || false,
-            hasEverUsedTrial: userData.hasEverUsedTrial || false,
-            hasEverUsedPremium: userData.hasEverUsedPremium || false,
-          };
-          dataSource = 'firebase';
-          console.log(`📱 Firebase에서 구독 정보 사용: ${subscriptionData.currentPlan}`);
-        }
-      } catch (error) {
-        console.log(`❌ Firebase 데이터 확인 실패: ${error.message}`);
-      }
-    }
-
-    // 🎯 Step 4: 둘 다 없으면 기본값
-    if (!subscriptionData) {
-      subscriptionData = {
-        currentPlan: 'free',
-        isActive: false,
-        hasEverUsedTrial: false,
-        hasEverUsedPremium: false,
-      };
-      dataSource = 'default';
-      console.log(`📝 기본값으로 구독 정보 설정: ${subscriptionData.currentPlan}`);
-    }
-
-    return {
-      success: true,
-      subscription: subscriptionData,
-      dataSource: dataSource, // 클라이언트에서 데이터 소스 확인 가능
-      version: "v2",
-    };
-
-  } catch (error) {
-    console.error('구독 상태 확인 오류:', error);
-    return {
-      success: false,
-      error: error.message,
-      dataSource: 'error',
-      version: "v2",
-    };
-  }
-});
-
-// App Store Connect API 호출 함수
-async function checkAppStoreConnect(originalTransactionId) {
-  try {
-    // JWT 토큰 생성
+    // getAllSubscriptionStatuses 로직 재사용
     const token = generateServerJWT();
 
     const apiUrl = APP_STORE_SERVER_API_URL +
@@ -764,17 +487,29 @@ async function checkAppStoreConnect(originalTransactionId) {
     }
 
     return {
-      currentPlan: currentPlan,
-      isActive: isActive,
-      expirationDate: expirationDate,
-      autoRenewStatus: autoRenewStatus,
+      success: true,
+      subscription: {
+        isActive: isActive,
+        currentPlan: currentPlan,
+        expirationDate: expirationDate,
+        autoRenewStatus: autoRenewStatus,
+        subscriptionStatuses: subscriptionStatuses,
+      },
+      version: "v2",
     };
-
   } catch (error) {
-    console.log(`App Store Connect API 호출 실패: ${error.message}`);
-    return null;
+    console.error("Error checking subscription status:", error);
+
+    if (error instanceof HttpsError) {
+      throw error;
+    }
+
+    throw new HttpsError(
+      "internal",
+      "Failed to check subscription status",
+    );
   }
-}
+});
 
 /**
  * 🔥 App Store 영수증 검증 함수 (Firebase v2 with Secrets)
