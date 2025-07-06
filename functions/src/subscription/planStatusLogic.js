@@ -1,5 +1,5 @@
 // 📁 functions/subscription/planStatusLogic.js - 구독 상태 판단 로직
-const {PlanStatus} = require("../shared/constants");
+const {PlanStatus} = require("../shared/constant");
 
 /**
  * 구독 정보를 기반으로 정확한 구독 상태를 판단합니다.

@@ -517,7 +517,7 @@ async function checkAppStoreConnect(originalTransactionId) {
 }
 
 // App Store Server Notifications 웹훅 import
-const notificationWebhook = require("./notification_webhook");
+const notificationWebhook = require("../webhook/appStoreNotifications");
 
 // 웹훅 함수 export
 exports.appStoreNotifications = notificationWebhook.appStoreNotifications;

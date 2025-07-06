@@ -11,6 +11,7 @@ const appstoreBundleId = defineSecret("APPSTORE_BUNDLE_ID");
  * Apple이 구독 상태 변경 시 실시간으로 POST 요청을 보내는 엔드포인트
  */
 exports.appStoreNotifications = onRequest({
+  region: "asia-southeast1",
   secrets: [appstoreBundleId],
   cors: false, // Apple 서버에서만 호출
 }, async (req, res) => {

@@ -1,5 +1,5 @@
 // 📁 functions/utils/testAccounts.js - 내부 테스트 계정
-const {PlanStatus} = require("../shared/constant");
+const {PlanStatus} = require("../shared/constants");
 const {
   getDateAfterYears,
   getDateAfterDays,
@@ -21,13 +21,6 @@ function checkInternalTestAccount(email) {
       expirationDate: getDateAfterYears(1),
       description: "관리자 계정 (프리미엄 활성)",
       autoRenewStatus: true,
-      subscriptionType: "yearly",
-      originalTransactionId: "test_admin_transaction_001",
-      productId: "com.pikabook.premium.yearly",
-      isActive: true,
-      isFreeTrial: false,
-      hasEverUsedTrial: true,
-      hasEverUsedPremium: true,
     },
 
     "developer@pikabook.com": {
@@ -35,13 +28,6 @@ function checkInternalTestAccount(email) {
       expirationDate: getDateAfterYears(1),
       description: "개발자 계정 (프리미엄 활성)",
       autoRenewStatus: true,
-      subscriptionType: "monthly",
-      originalTransactionId: "test_developer_transaction_001",
-      productId: "com.pikabook.premium.monthly",
-      isActive: true,
-      isFreeTrial: false,
-      hasEverUsedTrial: true,
-      hasEverUsedPremium: true,
     },
 
     // 🔵 체험 계정들
@@ -50,13 +36,6 @@ function checkInternalTestAccount(email) {
       expirationDate: getDateAfterDays(7),
       description: "체험 계정 (7일 체험 중)",
       autoRenewStatus: true,
-      subscriptionType: "monthly",
-      originalTransactionId: "test_trial_transaction_001",
-      productId: "com.pikabook.premium.monthly",
-      isActive: true,
-      isFreeTrial: true,
-      hasEverUsedTrial: true,
-      hasEverUsedPremium: false,
     },
 
     "trial-cancelled@pikabook.com": {
@@ -64,27 +43,14 @@ function checkInternalTestAccount(email) {
       expirationDate: getDateAfterDays(3),
       description: "체험 취소 계정 (3일 남음)",
       autoRenewStatus: false,
-      subscriptionType: "monthly",
-      originalTransactionId: "test_trial_cancelled_transaction_001",
-      productId: "com.pikabook.premium.monthly",
-      isActive: true,
-      isFreeTrial: true,
-      hasEverUsedTrial: true,
-      hasEverUsedPremium: false,
     },
 
     "trial-expired@pikabook.com": {
-      planStatus: PlanStatus.TRIAL_COMPLETED,
+      planStatus: PlanStatus.FREE,
       expirationDate: getDateBeforeDays(1),
       description: "체험 만료 계정",
       autoRenewStatus: false,
-      subscriptionType: null,
-      originalTransactionId: "test_trial_expired_transaction_001",
-      productId: null,
-      isActive: false,
-      isFreeTrial: false,
       hasEverUsedTrial: true,
-      hasEverUsedPremium: false,
     },
 
     // 🟡 프리미엄 계정들
@@ -93,12 +59,6 @@ function checkInternalTestAccount(email) {
       expirationDate: getDateAfterDays(15),
       description: "프리미엄 취소 예정 계정 (15일 남음)",
       autoRenewStatus: false,
-      subscriptionType: "monthly",
-      originalTransactionId: "test_premium_cancelled_transaction_001",
-      productId: "com.pikabook.premium.monthly",
-      isActive: true,
-      isFreeTrial: false,
-      hasEverUsedTrial: true,
       hasEverUsedPremium: true,
     },
 
@@ -107,12 +67,6 @@ function checkInternalTestAccount(email) {
       expirationDate: getDateBeforeDays(3),
       description: "프리미엄 만료 계정",
       autoRenewStatus: false,
-      subscriptionType: null,
-      originalTransactionId: "test_premium_expired_transaction_001",
-      productId: null,
-      isActive: false,
-      isFreeTrial: false,
-      hasEverUsedTrial: true,
       hasEverUsedPremium: true,
     },
 
@@ -122,12 +76,6 @@ function checkInternalTestAccount(email) {
       gracePeriodEnd: getDateAfterDays(11),
       description: "프리미엄 Grace Period 계정 (결제 실패)",
       autoRenewStatus: false,
-      subscriptionType: "monthly",
-      originalTransactionId: "test_premium_grace_transaction_001",
-      productId: "com.pikabook.premium.monthly",
-      isActive: true,
-      isFreeTrial: false,
-      hasEverUsedTrial: true,
       hasEverUsedPremium: true,
     },
 
@@ -137,13 +85,6 @@ function checkInternalTestAccount(email) {
       expirationDate: getDateAfterYears(1),
       description: "앱스토어 심사용 계정",
       autoRenewStatus: true,
-      subscriptionType: "yearly",
-      originalTransactionId: "test_reviewer_transaction_001",
-      productId: "com.pikabook.premium.yearly",
-      isActive: true,
-      isFreeTrial: false,
-      hasEverUsedTrial: false,
-      hasEverUsedPremium: true,
     },
 
     "refunded@pikabook.com": {
@@ -151,12 +92,6 @@ function checkInternalTestAccount(email) {
       expirationDate: getDateBeforeDays(1),
       description: "환불된 계정",
       autoRenewStatus: false,
-      subscriptionType: null,
-      originalTransactionId: "test_refunded_transaction_001",
-      productId: null,
-      isActive: false,
-      isFreeTrial: false,
-      hasEverUsedTrial: true,
       hasEverUsedPremium: true,
     },
   };

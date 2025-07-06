@@ -1,7 +1,7 @@
 // 📁 functions/subscription/checkSubscriptionStatus.js - 메인 구독 상태 확인 함수
 const {onCall, HttpsError} = require("firebase-functions/v2/https");
 const admin = require("firebase-admin");
-const {PlanStatus} = require("../shared/constants");
+const {PlanStatus} = require("../shared/constant");
 const {checkInternalTestAccount} = require("../utils/testAccounts");
 const {checkAppStoreConnect} = require("./appStoreConnectService");
 const {
@@ -15,6 +15,7 @@ const {
  * 🔥 통합 구독 상태 확인 함수 (Firebase v2 with Secrets)
  */
 const subCheckSubscriptionStatus = onCall({
+  region: "asia-southeast1",
   secrets: [
     appstoreKeyId,
     appstoreIssuerId,
