@@ -152,7 +152,9 @@ async function processNotification(
 
   console.log(`🔄 처리 시작: ${notificationType} (${subtype})`);
 
-  // originalTransactionId로 사용자 찾기
+  // 🔍 originalTransactionId로 사용자 찾기
+  console.log(`🔍 originalTransactionId로 사용자 검색: ${originalTransactionId}`);
+  
   const usersQuery = await db.collection("users")
     .where(
       "subscription.originalTransactionId",
@@ -163,7 +165,8 @@ async function processNotification(
     .get();
 
   if (usersQuery.empty) {
-    console.log("⚠️ 해당 거래 ID를 가진 사용자를 찾을 수 없습니다:", originalTransactionId);
+    console.log("❌ 해당 originalTransactionId를 가진 사용자를 찾을 수 없습니다:", originalTransactionId);
+    console.log("💡 클라이언트에서 originalTransactionId가 올바르게 저장되었는지 확인 필요");
     return;
   }
 
@@ -171,7 +174,7 @@ async function processNotification(
   const userId = userDoc.id;
   const userData = userDoc.data();
 
-  console.log(`👤 사용자 발견: ${userId}`);
+  console.log(`✅ originalTransactionId로 사용자 발견: ${userId}`);
 
   // 기존 구독 정보
   const currentSubscription = userData.subscription || {};

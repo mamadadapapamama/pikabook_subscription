@@ -95,84 +95,17 @@ const subCheckSubscriptionStatus = onCall({
         const userDoc = await db.collection("users").doc(userId).get();
         if (userDoc.exists) {
           const userData = userDoc.data();
-          
-          // 🔥 웹훅이 저장한 subscription 필드에서 데이터 조회
-          const subscription = userData.subscription;
-          
-          if (subscription && subscription.plan && subscription.status) {
-            console.log(`📦 웹훅 구독 데이터 발견:`, subscription);
-            
-            // 웹훅 데이터를 EntitlementEngine이 기대하는 형식으로 변환
-            const now = Date.now();
-            const expiryDate = subscription.expiryDate?.toMillis() || 0;
-            const isActive = subscription.status === 'active' && expiryDate > now;
-            
-            // planStatus 계산
-            let planStatus = PlanStatus.FREE;
-            let currentPlan = 'free';
-            
-            if (isActive) {
-              if (subscription.isFreeTrial) {
-                planStatus = subscription.isCancelled ? PlanStatus.TRIAL_CANCELLED : PlanStatus.TRIAL_ACTIVE;
-                currentPlan = 'trial';
-              } else {
-                if (subscription.isCancelled) {
-                  planStatus = PlanStatus.PREMIUM_CANCELLED;
-                } else {
-                  planStatus = PlanStatus.PREMIUM_ACTIVE;
-                }
-                currentPlan = 'premium';
-              }
-            } else if (subscription.status === 'expired') {
-              if (subscription.isFreeTrial) {
-                planStatus = PlanStatus.TRIAL_COMPLETED;
-                currentPlan = 'premium'; // 체험 완료 후는 프리미엄으로 간주
-              } else {
-                planStatus = PlanStatus.PREMIUM_EXPIRED;
-                currentPlan = 'free';
-              }
-            } else if (subscription.status === 'revoked') {
-              planStatus = PlanStatus.REFUNDED;
-              currentPlan = 'free';
-            }
-            
-            subscriptionData = {
-              // EntitlementEngine이 기대하는 필드들
-              currentPlan: currentPlan,
-              isActive: isActive,
-              planStatus: planStatus,
-              autoRenewStatus: subscription.autoRenewStatus || false,
-              subscriptionType: subscription.plan === 'premium' ? 'monthly' : 'monthly', // 기본값
-              expirationDate: subscription.expiryDate?.toMillis()?.toString() || null,
-              
-              // 추가 정보
-              hasEverUsedTrial: subscription.isFreeTrial || false,
-              hasEverUsedPremium: subscription.plan === 'premium' || false,
-              originalTransactionId: subscription.originalTransactionId,
-              lastNotificationType: subscription.lastNotificationType,
-            };
-            
-            dataSource = "firestore-webhook";
-            console.log(`✅ 웹훅 데이터로 구독 정보 생성:`, {
-              currentPlan: subscriptionData.currentPlan,
-              isActive: subscriptionData.isActive,
-              planStatus: subscriptionData.planStatus,
-              autoRenewStatus: subscriptionData.autoRenewStatus,
-            });
-          } else {
-            // 기존 레거시 필드에서 조회 (fallback)
-            subscriptionData = {
-              planStatus: userData.planStatus || PlanStatus.FREE,
-              currentPlan: 'free',
-              isActive: false,
-              expirationDate: userData.expirationDate,
-              autoRenewStatus: userData.autoRenewStatus || false,
-              hasEverUsedTrial: userData.hasEverUsedTrial || false,
-              hasEverUsedPremium: userData.hasEverUsedPremium || false,
-            };
-            dataSource = "firestore-legacy";
-            console.log(`📱 레거시 Firebase 데이터 사용: ${subscriptionData.planStatus}`);
-          }
+          subscriptionData = {
+            planStatus: userData.planStatus || PlanStatus.FREE,
+            expirationDate: userData.expirationDate,
+            autoRenewStatus: userData.autoRenewStatus || false,
+            hasEverUsedTrial: userData.hasEverUsedTrial || false,
+            hasEverUsedPremium: userData.hasEverUsedPremium || false,
+          };
+          dataSource = "firebase";
+          console.log(
+            `📱 Firebase에서 구독 정보 사용: ${subscriptionData.planStatus}`,
+          );
         }
       } catch (error) {
         console.log(`❌ Firebase 데이터 확인 실패: ${error.message}`);
