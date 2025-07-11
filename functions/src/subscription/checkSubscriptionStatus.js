@@ -2,7 +2,7 @@
 // 메인 구독 상태 확인 함수 (Apple 공식 라이브러리)
 const {onCall, HttpsError} = require("firebase-functions/v2/https");
 const admin = require("firebase-admin");
-const {PlanStatus} = require("../shared/constant");
+const {Entitlement, SubscriptionStatus} = require("../shared/constant");
 const {checkInternalTestAccount} = require("../utils/testAccounts");
 const {checkAppStoreConnect} = require("./appStoreConnectService");
 const {
@@ -43,13 +43,13 @@ const subCheckSubscriptionStatus = onCall({
     if (testAccountResult) {
       console.log(
         "🧪 내부 테스트 계정으로 구독 상태 반환: " +
-        testAccountResult.planStatus,
+        testAccountResult.entitlement,
       );
       return {
         success: true,
         subscription: testAccountResult,
         dataSource: "test-account",
-        version: "v3-official-library",
+        version: "v4-simplified",
       };
     }
 
@@ -61,7 +61,8 @@ const subCheckSubscriptionStatus = onCall({
     // 🎯 Step 2: App Store Connect 우선 확인 (Apple 공식 라이브러리 사용)
     if (appStoreFirst) {
       try {
-        console.log("🚀 [Official Library] App Store Connect 우선 확인 시작 " +
+        console.log(
+          "🚀 [Official Library] App Store Connect 우선 확인 시작 " +
           "(userId: " + userId + ")");
 
         // originalTransactionId가 없으면 Firestore에서 조회
@@ -85,12 +86,13 @@ const subCheckSubscriptionStatus = onCall({
             originalTransactionId,
           );
 
-          if (appStoreData && appStoreData.planStatus !== PlanStatus.FREE) {
+          // 🔍 App Store 데이터가 있고 무료가 아닌 경우 사용
+          if (appStoreData && appStoreData.entitlement !== Entitlement.FREE) {
             subscriptionData = appStoreData;
             dataSource = "appstore-official-library";
             console.log(
               "✅ [Official Library] App Store Connect에서 구독 정보 발견: " +
-              subscriptionData.planStatus,
+              subscriptionData.entitlement,
             );
           } else {
             console.log("⚠️ [Official Library] " +
@@ -122,48 +124,49 @@ const subCheckSubscriptionStatus = onCall({
           if (subscription && subscription.plan && subscription.status) {
             console.log("📦 [Firestore] 웹훅 구독 데이터 발견:", subscription);
 
-            // 웹훅 데이터를 EntitlementEngine이 기대하는 형식으로 변환
+            // 🎯 새로운 구조로 상태 결정
+            let entitlement = Entitlement.FREE;
+            let subscriptionStatus = SubscriptionStatus.ACTIVE;
+
             const now = Date.now();
             const expiryDate = subscription.expiryDate?.toMillis() || 0;
             const isActive = subscription.status === "active" &&
               expiryDate > now;
+            const isExpired = expiryDate > 0 && expiryDate < now;
 
-            // planStatus 계산
-            let planStatus = PlanStatus.FREE;
-            let currentPlan = "free";
-
+            // entitlement 결정
             if (isActive) {
               if (subscription.isFreeTrial) {
-                planStatus = subscription.isCancelled ?
-                  PlanStatus.TRIAL_CANCELLED : PlanStatus.TRIAL_ACTIVE;
-                currentPlan = "trial";
+                entitlement = Entitlement.TRIAL;
               } else {
-                if (subscription.isCancelled) {
-                  planStatus = PlanStatus.PREMIUM_CANCELLED;
-                } else {
-                  planStatus = PlanStatus.PREMIUM_ACTIVE;
-                }
-                currentPlan = "premium";
+                entitlement = Entitlement.PREMIUM;
               }
-            } else if (subscription.status === "expired") {
-              if (subscription.isFreeTrial) {
-                planStatus = PlanStatus.TRIAL_COMPLETED;
-                currentPlan = "premium"; // 체험 완료 후는 프리미엄으로 간주
-              } else {
-                planStatus = PlanStatus.PREMIUM_EXPIRED;
-                currentPlan = "free";
-              }
-            } else if (subscription.status === "revoked") {
-              planStatus = PlanStatus.REFUNDED;
-              currentPlan = "free";
+            } else if (!isExpired && subscription.isFreeTrial) {
+              entitlement = Entitlement.TRIAL;
+            } else if (!isExpired && subscription.plan === "premium") {
+              entitlement = Entitlement.PREMIUM;
+            }
+
+            // subscriptionStatus 결정
+            if (subscription.status === "revoked") {
+              subscriptionStatus = SubscriptionStatus.REFUNDED;
+            } else if (isExpired) {
+              subscriptionStatus = SubscriptionStatus.EXPIRED;
+            } else if (!subscription.autoRenewStatus &&
+              (isActive || entitlement !== Entitlement.FREE)) {
+              subscriptionStatus = SubscriptionStatus.CANCELLING;
+            } else if (!isActive && !isExpired) {
+              subscriptionStatus = SubscriptionStatus.CANCELLED;
             }
 
             subscriptionData = {
-              // EntitlementEngine이 기대하는 필드들
-              currentPlan: currentPlan,
-              isActive: isActive,
-              planStatus: planStatus,
-              autoRenewStatus: subscription.autoRenewStatus || false,
+              // 🎯 새로운 구조
+              entitlement: entitlement,
+              subscriptionStatus: subscriptionStatus,
+              hasUsedTrial: subscription.isFreeTrial || false,
+
+              // 메타데이터
+              autoRenewEnabled: subscription.autoRenewStatus || false,
               subscriptionType: subscription.plan === "premium" ?
                 "monthly" : "monthly", // 기본값
               expirationDate: subscription.expiryDate?.toMillis()
@@ -178,25 +181,24 @@ const subCheckSubscriptionStatus = onCall({
 
             dataSource = "firestore-webhook";
             console.log("✅ [Firestore] 웹훅 데이터로 구독 정보 생성:", {
-              currentPlan: subscriptionData.currentPlan,
-              isActive: subscriptionData.isActive,
-              planStatus: subscriptionData.planStatus,
-              autoRenewStatus: subscriptionData.autoRenewStatus,
+              entitlement: subscriptionData.entitlement,
+              subscriptionStatus: subscriptionData.subscriptionStatus,
+              hasUsedTrial: subscriptionData.hasUsedTrial,
             });
           } else {
             // 기존 레거시 필드에서 조회 (fallback)
             subscriptionData = {
-              planStatus: userData.planStatus || PlanStatus.FREE,
-              currentPlan: "free",
-              isActive: false,
+              entitlement: userData.planStatus || Entitlement.FREE,
+              subscriptionStatus: SubscriptionStatus.EXPIRED, // 레거시는 대부분 만료됨
+              hasUsedTrial: userData.hasEverUsedTrial || false,
+              autoRenewEnabled: userData.autoRenewStatus || false,
               expirationDate: userData.expirationDate,
-              autoRenewStatus: userData.autoRenewStatus || false,
               hasEverUsedTrial: userData.hasEverUsedTrial || false,
               hasEverUsedPremium: userData.hasEverUsedPremium || false,
             };
             dataSource = "firestore-legacy";
             console.log("📱 [Firestore] 레거시 Firebase 데이터 사용: " +
-              subscriptionData.planStatus);
+              subscriptionData.entitlement);
           }
         }
       } catch (error) {
@@ -208,31 +210,33 @@ const subCheckSubscriptionStatus = onCall({
     // 🎯 Step 4: 둘 다 없으면 기본값
     if (!subscriptionData) {
       subscriptionData = {
-        planStatus: PlanStatus.FREE,
-        currentPlan: "free",
-        isActive: false,
-        autoRenewStatus: false,
+        entitlement: Entitlement.FREE,
+        subscriptionStatus: SubscriptionStatus.ACTIVE, // 신규 사용자는 active
+        hasUsedTrial: false,
+        autoRenewEnabled: false,
         hasEverUsedTrial: false,
         hasEverUsedPremium: false,
       };
       dataSource = "default";
       console.log(
         "📝 [Default] 기본값으로 구독 정보 설정: " +
-        subscriptionData.planStatus,
+        subscriptionData.entitlement,
       );
     }
 
     console.log("✅ [Final] 구독 상태 확인 완료:", {
-      planStatus: subscriptionData.planStatus,
+      entitlement: subscriptionData.entitlement,
+      subscriptionStatus: subscriptionData.subscriptionStatus,
+      hasUsedTrial: subscriptionData.hasUsedTrial,
       dataSource: dataSource,
-      version: "v3-official-library",
+      version: "v4-simplified",
     });
 
     return {
       success: true,
       subscription: subscriptionData,
       dataSource: dataSource,
-      version: "v3-official-library",
+      version: "v4-simplified",
       timestamp: new Date().toISOString(),
     };
   } catch (error) {

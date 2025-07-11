@@ -1,19 +1,27 @@
 // 📁 functions/shared/constants.js - 공통 상수
-const PlanStatus = {
+
+// 기능 접근 제어
+const Entitlement = {
   FREE: "free",
-  TRIAL_ACTIVE: "trial_active",
-  TRIAL_CANCELLED: "trial_cancelled",
-  TRIAL_COMPLETED: "trial_completed",
-  PREMIUM_ACTIVE: "premium_active",
-  PREMIUM_CANCELLED: "premium_cancelled",
-  PREMIUM_EXPIRED: "premium_expired",
-  PREMIUM_GRACE: "premium_grace",
+  TRIAL: "trial",
+  PREMIUM: "premium",
+};
+
+// 구독 생명주기 상태
+const SubscriptionStatus = {
+  ACTIVE: "active",
+  CANCELLING: "cancelling",
+  CANCELLED: "cancelled",
+  EXPIRED: "expired",
   REFUNDED: "refunded",
 };
 
 const APP_STORE_SERVER_API_URL = "https://api.storekit.itunes.apple.com";
 
 module.exports = {
-  PlanStatus,
+  Entitlement,
+  SubscriptionStatus,
   APP_STORE_SERVER_API_URL,
+  // 하위 호환성을 위해 PlanStatus도 유지 (deprecate 예정)
+  PlanStatus: Entitlement,
 };

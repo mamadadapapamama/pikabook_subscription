@@ -1,5 +1,5 @@
 // 📁 functions/utils/testAccounts.js - 내부 테스트 계정
-const {PlanStatus} = require("../shared/constant");
+const {Entitlement, SubscriptionStatus} = require("../shared/constant");
 const {
   getDateAfterYears,
   getDateAfterDays,
@@ -17,148 +17,148 @@ function checkInternalTestAccount(email) {
   const INTERNAL_TEST_ACCOUNTS = {
     // 🟢 프리미엄 활성 계정들
     "admin@pikabook.com": {
-      planStatus: PlanStatus.PREMIUM_ACTIVE,
+      entitlement: Entitlement.PREMIUM,
+      subscriptionStatus: SubscriptionStatus.ACTIVE,
+      hasUsedTrial: true,
       expirationDate: getDateAfterYears(1),
-      description: "관리자 계정 (프리미엄 활성)",
-      autoRenewStatus: true,
+      autoRenewEnabled: true,
       subscriptionType: "yearly",
       originalTransactionId: "test_admin_transaction_001",
       productId: "com.pikabook.premium.yearly",
-      isActive: true,
-      isFreeTrial: false,
       hasEverUsedTrial: true,
       hasEverUsedPremium: true,
-    },
-
-    "developer@pikabook.com": {
-      planStatus: PlanStatus.PREMIUM_ACTIVE,
-      expirationDate: getDateAfterYears(1),
-      description: "개발자 계정 (프리미엄 활성)",
-      autoRenewStatus: true,
-      subscriptionType: "monthly",
-      originalTransactionId: "test_developer_transaction_001",
-      productId: "com.pikabook.premium.monthly",
-      isActive: true,
-      isFreeTrial: false,
-      hasEverUsedTrial: true,
-      hasEverUsedPremium: true,
+      // 🎯 배너 전용 메타데이터
+      bannerMetadata: {
+        bannerType: "premiumStarted",
+        bannerDismissedAt: null,
+      },
     },
 
     // 🔵 체험 계정들
     "trial@pikabook.com": {
-      planStatus: PlanStatus.TRIAL_ACTIVE,
+      entitlement: Entitlement.TRIAL,
+      subscriptionStatus: SubscriptionStatus.ACTIVE,
+      hasUsedTrial: true,
       expirationDate: getDateAfterDays(7),
-      description: "체험 계정 (7일 체험 중)",
-      autoRenewStatus: true,
+      autoRenewEnabled: true,
       subscriptionType: "monthly",
       originalTransactionId: "test_trial_transaction_001",
       productId: "com.pikabook.premium.monthly",
-      isActive: true,
-      isFreeTrial: true,
       hasEverUsedTrial: true,
       hasEverUsedPremium: false,
+      // 🎯 배너 전용 메타데이터
+      bannerMetadata: {
+        bannerType: "trialStarted",
+        bannerDismissedAt: null,
+      },
     },
 
     "trial-cancelled@pikabook.com": {
-      planStatus: PlanStatus.TRIAL_CANCELLED,
+      entitlement: Entitlement.TRIAL,
+      subscriptionStatus: SubscriptionStatus.CANCELLING,
+      hasUsedTrial: true,
       expirationDate: getDateAfterDays(3),
-      description: "체험 취소 계정 (3일 남음)",
-      autoRenewStatus: false,
+      autoRenewEnabled: false,
       subscriptionType: "monthly",
       originalTransactionId: "test_trial_cancelled_transaction_001",
       productId: "com.pikabook.premium.monthly",
-      isActive: true,
-      isFreeTrial: true,
       hasEverUsedTrial: true,
       hasEverUsedPremium: false,
+      // 🎯 배너 전용 메타데이터
+      bannerMetadata: {
+        bannerType: "trialCancelled",
+        bannerDismissedAt: null,
+      },
     },
 
-    "trial-expired@pikabook.com": {
-      planStatus: PlanStatus.TRIAL_COMPLETED,
-      expirationDate: getDateBeforeDays(1),
-      description: "체험 만료 계정",
-      autoRenewStatus: false,
-      subscriptionType: null,
+    "trial-to-pre@pikabook.com": {
+      entitlement: Entitlement.PREMIUM,
+      subscriptionStatus: SubscriptionStatus.ACTIVE,
+      hasUsedTrial: true,
+      expirationDate: getDateAfterDays(29),
+      autoRenewEnabled: true,
+      subscriptionType: "monthly",
       originalTransactionId: "test_trial_expired_transaction_001",
-      productId: null,
-      isActive: false,
-      isFreeTrial: false,
+      productId: "com.pikabook.premium.monthly",
       hasEverUsedTrial: true,
-      hasEverUsedPremium: false,
+      hasEverUsedPremium: true,
+      // 🎯 배너 전용 메타데이터
+      bannerMetadata: {
+        bannerType: "trialCompleted",
+        bannerDismissedAt: null,
+      },
     },
 
     // 🟡 프리미엄 계정들
     "premium-cancelled@pikabook.com": {
-      planStatus: PlanStatus.PREMIUM_CANCELLED,
+      entitlement: Entitlement.PREMIUM,
+      subscriptionStatus: SubscriptionStatus.CANCELLING,
+      hasUsedTrial: true,
       expirationDate: getDateAfterDays(15),
-      description: "프리미엄 취소 예정 계정 (15일 남음)",
-      autoRenewStatus: false,
+      autoRenewEnabled: false,
       subscriptionType: "monthly",
       originalTransactionId: "test_premium_cancelled_transaction_001",
       productId: "com.pikabook.premium.monthly",
-      isActive: true,
-      isFreeTrial: false,
       hasEverUsedTrial: true,
       hasEverUsedPremium: true,
+      // 🎯 배너 전용 메타데이터
+      bannerMetadata: {
+        bannerType: "premiumCancelled",
+        bannerDismissedAt: null,
+      },
     },
 
     "premium-expired@pikabook.com": {
-      planStatus: PlanStatus.PREMIUM_EXPIRED,
+      entitlement: Entitlement.FREE,
+      subscriptionStatus: SubscriptionStatus.EXPIRED,
+      hasUsedTrial: true,
       expirationDate: getDateBeforeDays(3),
-      description: "프리미엄 만료 계정",
-      autoRenewStatus: false,
+      autoRenewEnabled: false,
       subscriptionType: null,
       originalTransactionId: "test_premium_expired_transaction_001",
       productId: null,
-      isActive: false,
-      isFreeTrial: false,
       hasEverUsedTrial: true,
       hasEverUsedPremium: true,
+      // 🎯 배너 전용 메타데이터
+      bannerMetadata: {
+        bannerType: "premiumExpired",
+        bannerDismissedAt: null,
+      },
     },
 
     "premium-grace@pikabook.com": {
-      planStatus: PlanStatus.PREMIUM_GRACE,
+      entitlement: Entitlement.PREMIUM,
+      subscriptionStatus: SubscriptionStatus.ACTIVE,
+      hasUsedTrial: true,
       expirationDate: getDateBeforeDays(5),
       gracePeriodEnd: getDateAfterDays(11),
-      description: "프리미엄 Grace Period 계정 (결제 실패)",
-      autoRenewStatus: false,
+      autoRenewEnabled: false,
       subscriptionType: "monthly",
       originalTransactionId: "test_premium_grace_transaction_001",
       productId: "com.pikabook.premium.monthly",
-      isActive: true,
-      isFreeTrial: false,
       hasEverUsedTrial: true,
       hasEverUsedPremium: true,
+      // 🎯 배너 전용 메타데이터
+      bannerMetadata: {
+        bannerType: "premiumGrace",
+        bannerDismissedAt: null,
+      },
     },
 
     // 🟠 특수 테스트 계정들
-    "reviewer@pikabook.com": {
-      planStatus: PlanStatus.PREMIUM_ACTIVE,
-      expirationDate: getDateAfterYears(1),
-      description: "앱스토어 심사용 계정",
-      autoRenewStatus: true,
-      subscriptionType: "yearly",
-      originalTransactionId: "test_reviewer_transaction_001",
-      productId: "com.pikabook.premium.yearly",
-      isActive: true,
-      isFreeTrial: false,
-      hasEverUsedTrial: false,
-      hasEverUsedPremium: true,
-    },
-
     "refunded@pikabook.com": {
-      planStatus: PlanStatus.REFUNDED,
+      entitlement: Entitlement.FREE,
+      subscriptionStatus: SubscriptionStatus.REFUNDED,
+      hasUsedTrial: true,
       expirationDate: getDateBeforeDays(1),
-      description: "환불된 계정",
-      autoRenewStatus: false,
+      autoRenewEnabled: false,
       subscriptionType: null,
       originalTransactionId: "test_refunded_transaction_001",
       productId: null,
-      isActive: false,
-      isFreeTrial: false,
       hasEverUsedTrial: true,
       hasEverUsedPremium: true,
     },
+
   };
 
   const accountInfo = INTERNAL_TEST_ACCOUNTS[email];
@@ -166,7 +166,9 @@ function checkInternalTestAccount(email) {
     return null;
   }
 
-  console.log(`🧪 [내부 계정] ${accountInfo.description}: ${email}`);
+  console.log(
+    `🧪 [내부 계정] ${email}: ` +
+    `${accountInfo.entitlement}/${accountInfo.subscriptionStatus}`);
 
   // 공통 정보 추가
   const result = {

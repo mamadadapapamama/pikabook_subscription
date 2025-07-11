@@ -1,7 +1,7 @@
 // 📁 functions/subscription/appStoreConnectService.js
 // Apple 공식 라이브러리 기반 구독 확인
 const {appStoreServerClient} = require("../utils/appStoreServerClient");
-const {PlanStatus} = require("../shared/constant");
+const {Entitlement, SubscriptionStatus} = require("../shared/constant");
 
 /**
  * 🚀 App Store Connect API로 구독 상태 확인 (Apple 공식 라이브러리 사용)
@@ -24,9 +24,10 @@ async function checkAppStoreConnect(originalTransactionId) {
     if (!originalTransactionId) {
       console.log("❌ originalTransactionId가 없습니다");
       return {
-        planStatus: PlanStatus.FREE,
-        currentPlan: "free",
-        isActive: false,
+        entitlement: Entitlement.FREE,
+        subscriptionStatus: SubscriptionStatus.ACTIVE,
+        hasUsedTrial: false,
+        autoRenewEnabled: false,
         error: "No originalTransactionId provided",
       };
     }
@@ -38,9 +39,10 @@ async function checkAppStoreConnect(originalTransactionId) {
     if (!subscriptionResult.success) {
       console.error("❌ 구독 상태 조회 실패:", subscriptionResult.error);
       return {
-        planStatus: PlanStatus.FREE,
-        currentPlan: "free",
-        isActive: false,
+        entitlement: Entitlement.FREE,
+        subscriptionStatus: SubscriptionStatus.ACTIVE,
+        hasUsedTrial: false,
+        autoRenewEnabled: false,
         error: subscriptionResult.error,
       };
     }
@@ -54,18 +56,20 @@ async function checkAppStoreConnect(originalTransactionId) {
     );
 
     console.log("✅ App Store Connect 구독 상태 분석 완료:");
-    console.log("   - Plan Status:", subscriptionInfo.planStatus);
-    console.log("   - Current Plan:", subscriptionInfo.currentPlan);
-    console.log("   - Is Active:", subscriptionInfo.isActive);
-    console.log("   - Auto Renew:", subscriptionInfo.autoRenewStatus);
+    console.log("   - Entitlement:", subscriptionInfo.entitlement);
+    console.log("   - Subscription Status:",
+      subscriptionInfo.subscriptionStatus);
+    console.log("   - Has Used Trial:", subscriptionInfo.hasUsedTrial);
+    console.log("   - Auto Renew:", subscriptionInfo.autoRenewEnabled);
 
     return subscriptionInfo;
   } catch (error) {
     console.error("❌ App Store Connect 조회 중 예외 발생:", error.message);
     return {
-      planStatus: PlanStatus.FREE,
-      currentPlan: "free",
-      isActive: false,
+      entitlement: Entitlement.FREE,
+      subscriptionStatus: SubscriptionStatus.ACTIVE,
+      hasUsedTrial: false,
+      autoRenewEnabled: false,
       error: error.message,
     };
   }
@@ -84,10 +88,10 @@ async function analyzeSubscriptionStatuses(subscriptionStatuses) {
 
     // 기본값 설정
     const result = {
-      planStatus: PlanStatus.FREE,
-      currentPlan: "free",
-      isActive: false,
-      autoRenewStatus: false,
+      entitlement: Entitlement.FREE,
+      subscriptionStatus: SubscriptionStatus.ACTIVE,
+      hasUsedTrial: false,
+      autoRenewEnabled: false,
       subscriptionType: null,
       expirationDate: null,
       hasEverUsedTrial: false,
@@ -149,6 +153,7 @@ async function analyzeSubscriptionStatuses(subscriptionStatuses) {
       // 경험 여부 업데이트
       if (isFreeTrial) {
         result.hasEverUsedTrial = true;
+        result.hasUsedTrial = true;
       }
       if (isPremium) {
         result.hasEverUsedPremium = true;
@@ -156,48 +161,45 @@ async function analyzeSubscriptionStatuses(subscriptionStatuses) {
 
       // 🎯 활성 구독 상태 확인
       if (status === 1) { // Active
-        result.isActive = true;
-        result.autoRenewStatus = true;
+        result.autoRenewEnabled = true;
         result.expirationDate = expiresDate.toString();
 
         if (isFreeTrial) {
-          result.planStatus = PlanStatus.TRIAL_ACTIVE;
-          result.currentPlan = "trial";
+          result.entitlement = Entitlement.TRIAL;
         } else {
-          result.planStatus = PlanStatus.PREMIUM_ACTIVE;
-          result.currentPlan = "premium";
+          result.entitlement = Entitlement.PREMIUM;
         }
+        result.subscriptionStatus = SubscriptionStatus.ACTIVE;
       } else if (status === 2) { // Cancelled but still active
-        result.isActive = !isExpired;
-        result.autoRenewStatus = false;
+        result.autoRenewEnabled = false;
         result.expirationDate = expiresDate.toString();
 
         if (isFreeTrial) {
-          result.planStatus = isExpired ?
-            PlanStatus.TRIAL_COMPLETED : PlanStatus.TRIAL_CANCELLED;
-          result.currentPlan = isExpired ? "free" : "trial";
+          result.entitlement = isExpired ? Entitlement.FREE : Entitlement.TRIAL;
         } else {
-          result.planStatus = isExpired ?
-            PlanStatus.PREMIUM_EXPIRED : PlanStatus.PREMIUM_CANCELLED;
-          result.currentPlan = isExpired ? "free" : "premium";
+          result.entitlement = isExpired ?
+            Entitlement.FREE : Entitlement.PREMIUM;
+        }
+
+        if (isExpired) {
+          result.subscriptionStatus = SubscriptionStatus.EXPIRED;
+        } else {
+          result.subscriptionStatus = SubscriptionStatus.CANCELLING;
         }
       } else if (status === 3) { // Billing retry
-        result.isActive = !isExpired;
-        result.autoRenewStatus = true;
+        result.autoRenewEnabled = true;
         result.expirationDate = expiresDate.toString();
-        result.planStatus = PlanStatus.PREMIUM_GRACE_PERIOD;
-        result.currentPlan = "premium";
+        result.entitlement = Entitlement.PREMIUM;
+        result.subscriptionStatus = SubscriptionStatus.ACTIVE;
       } else if (status === 4) { // Grace period
-        result.isActive = true;
-        result.autoRenewStatus = true;
+        result.autoRenewEnabled = true;
         result.expirationDate = expiresDate.toString();
-        result.planStatus = PlanStatus.PREMIUM_GRACE_PERIOD;
-        result.currentPlan = "premium";
+        result.entitlement = Entitlement.PREMIUM;
+        result.subscriptionStatus = SubscriptionStatus.ACTIVE;
       } else if (status === 5) { // Revoked
-        result.isActive = false;
-        result.autoRenewStatus = false;
-        result.planStatus = PlanStatus.REFUNDED;
-        result.currentPlan = "free";
+        result.autoRenewEnabled = false;
+        result.entitlement = Entitlement.FREE;
+        result.subscriptionStatus = SubscriptionStatus.REFUNDED;
       }
     }
 
@@ -206,10 +208,10 @@ async function analyzeSubscriptionStatuses(subscriptionStatuses) {
   } catch (error) {
     console.error("❌ 구독 상태 분석 중 오류:", error.message);
     return {
-      planStatus: PlanStatus.FREE,
-      currentPlan: "free",
-      isActive: false,
-      autoRenewStatus: false,
+      entitlement: Entitlement.FREE,
+      subscriptionStatus: SubscriptionStatus.ACTIVE,
+      hasUsedTrial: false,
+      autoRenewEnabled: false,
       error: error.message,
     };
   }

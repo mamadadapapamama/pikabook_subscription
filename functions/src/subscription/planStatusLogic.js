@@ -1,10 +1,10 @@
 // 📁 functions/subscription/planStatusLogic.js - 구독 상태 판단 로직
-const {PlanStatus} = require("../shared/constant");
+const {Entitlement, SubscriptionStatus} = require("../shared/constant");
 
 /**
  * 구독 정보를 기반으로 정확한 구독 상태를 판단합니다.
  * @param {object} subscriptionInfo - 구독 정보 객체
- * @return {string} PlanStatus enum 값
+ * @return {object} 새로운 구조의 구독 상태
  */
 function determinePlanStatus({
   currentPlan,
@@ -14,43 +14,46 @@ function determinePlanStatus({
   expirationDate,
   revocationDate,
   isInGracePeriod,
+  hasEverUsedTrial = false,
+  hasEverUsedPremium = false,
 }) {
   const now = Date.now();
+  const isExpired = expirationDate && new Date(expirationDate).getTime() < now;
 
-  // 1. 환불 여부 확인 (최우선)
-  if (revocationDate) return PlanStatus.REFUNDED;
-
-  // 2. 무료 플랜 확인
-  if (!currentPlan || currentPlan === "free") return PlanStatus.FREE;
-
-  // 3. 체험 상태 판단 (시간 기반)
-  if (isFreeTrial) {
-    const trialEnd = new Date(expirationDate).getTime();
-    if (now < trialEnd) {
-      return autoRenewStatus ?
-        PlanStatus.TRIAL_ACTIVE :
-        PlanStatus.TRIAL_CANCELLED;
-    } else {
-      return PlanStatus.TRIAL_COMPLETED;
-    }
+  // 🎯 entitlement 결정 (기능 접근)
+  let entitlement = Entitlement.FREE;
+  if (isFreeTrial && (isActive || !isExpired)) {
+    entitlement = Entitlement.TRIAL;
+  } else if (currentPlan?.startsWith("premium") && (isActive || !isExpired)) {
+    entitlement = Entitlement.PREMIUM;
   }
 
-  // 4. 프리미엄 상태 판단
-  if (currentPlan.startsWith("premium")) {
-    if (isActive) {
-      return autoRenewStatus ?
-        PlanStatus.PREMIUM_ACTIVE :
-        PlanStatus.PREMIUM_CANCELLED;
-    } else {
-      // Grace Period 확인 (만료되었지만 유예기간 중)
-      if (isInGracePeriod) {
-        return PlanStatus.PREMIUM_GRACE;
-      }
-      return PlanStatus.PREMIUM_EXPIRED;
-    }
+  // 🎯 subscriptionStatus 결정 (구독 생명주기)
+  let subscriptionStatus = SubscriptionStatus.ACTIVE;
+
+  if (revocationDate) {
+    subscriptionStatus = SubscriptionStatus.REFUNDED;
+  } else if (isExpired) {
+    subscriptionStatus = SubscriptionStatus.EXPIRED;
+  } else if (!autoRenewStatus &&
+    (isActive || entitlement !== Entitlement.FREE)) {
+    // 취소했지만 아직 기간이 남은 경우
+    subscriptionStatus = SubscriptionStatus.CANCELLING;
+  } else if (!isActive && !isExpired) {
+    subscriptionStatus = SubscriptionStatus.CANCELLED;
   }
 
-  return PlanStatus.FREE;
+  // 🎯 hasUsedTrial 결정
+  const hasUsedTrial = hasEverUsedTrial || isFreeTrial;
+
+  return {
+    entitlement,
+    subscriptionStatus,
+    hasUsedTrial,
+    // 추가 메타데이터
+    autoRenewEnabled: autoRenewStatus || false,
+    expirationDate: expirationDate || null,
+  };
 }
 
 /**
