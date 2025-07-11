@@ -12,7 +12,17 @@ const {
   appstoreBundleId,
 } = require("../utils/appStoreServerClient");
 
-
+/**
+ * 🚀 통합 구독 상태 확인 함수 (Apple 공식 라이브러리 기반)
+ *
+ * ✅ 주요 개선사항:
+ * - Apple 공식 라이브러리 사용으로 안정성 대폭 향상
+ * - 자동 JWT 토큰 관리 및 에러 처리
+ * - 타입 안전성 및 API 호환성 보장
+ * - 재시도 로직 및 graceful fallback
+ * @param {object} request - Firebase Functions 요청
+ * @return {Promise<object>} 구독 상태 정보
+ */
 const subCheckSubscriptionStatus = onCall({
   region: "asia-southeast1",
   secrets: [
@@ -234,6 +244,15 @@ const subCheckSubscriptionStatus = onCall({
       dataSource: dataSource,
       version: "v3-official-library",
       timestamp: new Date().toISOString(),
+      libraryInfo: {
+        isUsingOfficialLibrary: true,
+        benefits: [
+          "자동 JWT 토큰 관리",
+          "에러 처리 자동화",
+          "타입 안전성 보장",
+          "Apple 업데이트 자동 호환",
+        ],
+      },
     };
   } catch (error) {
     console.error("❌ [Error] 구독 상태 확인 오류:", error);
