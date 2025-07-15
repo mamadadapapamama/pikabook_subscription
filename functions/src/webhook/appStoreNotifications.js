@@ -2,6 +2,7 @@
 const {onRequest} = require("firebase-functions/v2/https");
 const {defineSecret} = require("firebase-functions/params");
 const admin = require("firebase-admin");
+const {appStoreServerClient} = require("../utils/appStoreServerClient");
 
 // Secrets 정의 (기존과 동일)
 const appstoreBundleId = defineSecret("APPSTORE_BUNDLE_ID");
@@ -155,14 +156,28 @@ async function processNotification(
   // 🔍 originalTransactionId로 사용자 찾기
   console.log(`🔍 originalTransactionId로 사용자 검색: ${originalTransactionId}`);
 
-  const usersQuery = await db.collection("users")
+  // 🎯 새로운 구조 우선 검색
+  let usersQuery = await db.collection("users")
     .where(
-      "subscription.originalTransactionId",
+      "subscriptionData.originalTransactionId",
       "==",
       originalTransactionId,
     )
     .limit(1)
     .get();
+
+  // 🔄 기존 구조 fallback 검색 (호환성)
+  if (usersQuery.empty) {
+    console.log("🔄 새로운 구조에서 사용자 없음, 기존 구조에서 재검색");
+    usersQuery = await db.collection("users")
+      .where(
+        "subscription.originalTransactionId",
+        "==",
+        originalTransactionId,
+      )
+      .limit(1)
+      .get();
+  }
 
   if (usersQuery.empty) {
     console.log("❌ 해당 originalTransactionId를 가진 사용자를 찾을 수 없습니다:",
@@ -279,45 +294,50 @@ async function processNotification(
     return;
   }
 
-  // Firestore 업데이트
+  // Firestore 업데이트 (통합 구조)
   try {
     // 🎯 새로운 구조로 변환
-    const cacheData = convertToNewStructure(subscriptionUpdate, notificationType, subtype);
+    const cacheData = await convertToNewStructure(subscriptionUpdate, notificationType, subtype);
+
+    // 🎯 통합 구독 데이터 구조 (간소화)
+    const unifiedSubscriptionData = {
+      ...cacheData,
+      
+      // 기본 정보
+      originalTransactionId: originalTransactionId,
+      lastTransactionId: transaction.transactionId,
+      
+      // 포맷 변환
+      expirationDate: cacheData.expirationDate ?
+        parseInt(cacheData.expirationDate) : null,
+      
+      // 메타데이터 (간소화)
+      lastUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      lastUpdateSource: "appStoreNotifications",
+      dataSource: "webhook-real-time",
+      
+      // 🎯 디버깅용 (선택적)
+      lastNotificationType: notificationType,
+      lastNotificationSubtype: subtype,
+    };
 
     await db.collection("users").doc(userId).update({
-      // 🔄 기존 구조 (호환성 유지)
-      subscription: subscriptionUpdate,
-
-      // 🎯 새로운 캐시 시스템 연동
-      cachedSubscription: {
-        subscription: cacheData,
-        lastCacheAt: admin.firestore.FieldValue.serverTimestamp(),
-        cacheSource: "webhook-real-time",
-        cacheVersion: "settings-optimized-v1",
-        notificationType: notificationType,
-        subtype: subtype,
-      },
-
+      // 🎯 통합 구독 데이터 (단일 구조)
+      subscriptionData: unifiedSubscriptionData,
+      
       // 메타데이터
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-
-      // 🎯 EntitlementEngine 실시간 알림용
-      webhookUpdate: {
-        notificationType: notificationType,
-        subtype: subtype,
-        originalTransactionId: originalTransactionId,
-        timestamp: admin.firestore.FieldValue.serverTimestamp(),
-        processed: false,
-      },
     });
 
-    console.log("✅ Firestore 업데이트 완료 (캐시 포함):", {
+    console.log("✅ Firestore 업데이트 완료 (통합 구조):", {
       userId: userId,
       plan: subscriptionUpdate.plan,
       status: subscriptionUpdate.status,
       entitlement: cacheData.entitlement,
       subscriptionStatus: cacheData.subscriptionStatus,
-      cacheSource: "webhook-real-time",
+      hasUsedTrial: cacheData.hasUsedTrial,
+      autoRenewEnabled: cacheData.autoRenewEnabled,
+      dataSource: "webhook-real-time",
     });
   } catch (error) {
     console.error("💥 Firestore 업데이트 실패:", error);
@@ -326,29 +346,78 @@ async function processNotification(
 }
 
 /**
- * 🎯 기존 구조를 새로운 캐시 구조로 변환
+ * 🔍 전체 히스토리에서 trial 사용 여부 확인 (웹훅용)
+ * @param {string} originalTransactionId - 원본 트랜잭션 ID
+ * @return {Promise<boolean>} trial 사용 여부
+ */
+async function checkTrialUsageFromHistory(originalTransactionId) {
+  try {
+    console.log("🔍 [웹훅] 전체 히스토리에서 trial 사용 여부 확인:", originalTransactionId);
+
+    // App Store Server API로 전체 히스토리 조회
+    const historyResult = await appStoreServerClient.getTransactionHistory(originalTransactionId);
+    
+    if (!historyResult.success) {
+      console.error("❌ 트랜잭션 히스토리 조회 실패:", historyResult.error);
+      return false;
+    }
+
+    const transactions = historyResult.data.signedTransactions || [];
+    console.log(`📋 [웹훅] 전체 트랜잭션 수: ${transactions.length}`);
+
+    // 모든 트랜잭션을 확인하여 trial 사용 여부 체크
+    for (const signedTransaction of transactions) {
+      const decodedTransaction = decodeJWS(signedTransaction);
+      
+      if (!decodedTransaction.success) {
+        continue;
+      }
+
+      const transactionData = decodedTransaction.data;
+      const isFreeTrial = transactionData.offerType === 5; // Free Trial
+      
+      if (isFreeTrial) {
+        console.log("✅ [웹훅] 히스토리에서 trial 사용 확인됨:", {
+          transactionId: transactionData.transactionId,
+          productId: transactionData.productId,
+          offerType: transactionData.offerType,
+        });
+        return true;
+      }
+    }
+
+    console.log("❌ [웹훅] 히스토리에서 trial 사용 확인되지 않음");
+    return false;
+  } catch (error) {
+    console.error("❌ [웹훅] 히스토리 trial 확인 중 오류:", error.message);
+    return false;
+  }
+}
+
+/**
+ * 🎯 기존 구조를 새로운 캐시 구조로 변환 (간소화)
  * @param {object} subscriptionUpdate - 기존 구독 업데이트 정보
  * @param {string} notificationType - 알림 타입
  * @param {string} subtype - 알림 서브타입
  * @return {object} 새로운 구조의 캐시 데이터
  */
-function convertToNewStructure(subscriptionUpdate, notificationType, subtype) {
+async function convertToNewStructure(subscriptionUpdate, notificationType, subtype) {
   const {Entitlement, SubscriptionStatus} = require("../shared/constant");
 
   // 기본값 설정
   const result = {
     entitlement: Entitlement.FREE,
     subscriptionStatus: SubscriptionStatus.ACTIVE,
-    hasUsedTrial: false,
+    hasUsedTrial: false, // 히스토리 조회 후 설정
     autoRenewEnabled: subscriptionUpdate.autoRenewStatus || false,
     subscriptionType: subscriptionUpdate.plan === "premium" ? "monthly" : "monthly",
     expirationDate: subscriptionUpdate.expiryDate?.toMillis()?.toString() || null,
-    hasEverUsedTrial: subscriptionUpdate.isFreeTrial || false,
-    hasEverUsedPremium: subscriptionUpdate.plan === "premium" || false,
-    lastNotificationType: notificationType,
-    lastNotificationSubtype: subtype,
-    dataSource: "webhook-real-time",
   };
+
+  // 🔍 전체 히스토리에서 trial 사용 여부 확인
+  if (subscriptionUpdate.originalTransactionId) {
+    result.hasUsedTrial = await checkTrialUsageFromHistory(subscriptionUpdate.originalTransactionId);
+  }
 
   // 🎯 Entitlement 결정
   const now = Date.now();
@@ -358,7 +427,6 @@ function convertToNewStructure(subscriptionUpdate, notificationType, subtype) {
   if (!isExpired && subscriptionUpdate.status === "active") {
     if (subscriptionUpdate.isFreeTrial) {
       result.entitlement = Entitlement.TRIAL;
-      result.hasUsedTrial = true;
     } else if (subscriptionUpdate.plan === "premium") {
       result.entitlement = Entitlement.PREMIUM;
     }
@@ -373,15 +441,16 @@ function convertToNewStructure(subscriptionUpdate, notificationType, subtype) {
     result.entitlement = Entitlement.FREE;
   } else if (subscriptionUpdate.isCancelled && subscriptionUpdate.status === "active") {
     result.subscriptionStatus = SubscriptionStatus.CANCELLING;
-    // 취소했지만 아직 유효하면 entitlement 유지
+    // 🎯 취소했지만 아직 유효하면 entitlement 유지
   } else if (subscriptionUpdate.status === "active") {
     result.subscriptionStatus = SubscriptionStatus.ACTIVE;
   }
 
-  // 🎯 특별한 알림 타입 처리
+  // 🎯 특별한 알림 타입별 처리
   if (notificationType === "SUBSCRIBED") {
     result.subscriptionStatus = SubscriptionStatus.ACTIVE;
   } else if (notificationType === "DID_CHANGE_RENEWAL_STATUS") {
+    // 🎯 사용자가 구독 취소 → autoRenewEnabled = false
     if (subscriptionUpdate.autoRenewStatus) {
       result.subscriptionStatus = SubscriptionStatus.ACTIVE;
     } else {
@@ -400,6 +469,7 @@ function convertToNewStructure(subscriptionUpdate, notificationType, subtype) {
     subtype: subtype,
     entitlement: result.entitlement,
     subscriptionStatus: result.subscriptionStatus,
+    autoRenewEnabled: result.autoRenewEnabled,
     hasUsedTrial: result.hasUsedTrial,
   });
 

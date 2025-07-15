@@ -56,8 +56,6 @@ function checkInternalTestAccount(email) {
       subscriptionType: "yearly",
       originalTransactionId: "test_admin_transaction_001",
       productId: "com.pikabook.premium.yearly",
-      hasEverUsedTrial: true,
-      hasEverUsedPremium: true,
       // 🎯 배너 전용 메타데이터
       bannerMetadata: {
         bannerType: "premiumStarted",
@@ -75,8 +73,6 @@ function checkInternalTestAccount(email) {
       subscriptionType: "monthly",
       originalTransactionId: "test_trial_transaction_001",
       productId: "com.pikabook.premium.monthly",
-      hasEverUsedTrial: true,
-      hasEverUsedPremium: false,
       // 🎯 배너 전용 메타데이터
       bannerMetadata: {
         bannerType: "trialStarted",
@@ -93,8 +89,6 @@ function checkInternalTestAccount(email) {
       subscriptionType: "monthly",
       originalTransactionId: "test_trial_cancelled_transaction_001",
       productId: "com.pikabook.premium.monthly",
-      hasEverUsedTrial: true,
-      hasEverUsedPremium: false,
       // 🎯 배너 전용 메타데이터
       bannerMetadata: {
         bannerType: "trialCancelled",
@@ -111,8 +105,6 @@ function checkInternalTestAccount(email) {
       subscriptionType: "monthly",
       originalTransactionId: "test_trial_expired_transaction_001",
       productId: "com.pikabook.premium.monthly",
-      hasEverUsedTrial: true,
-      hasEverUsedPremium: true,
       // 🎯 배너 전용 메타데이터
       bannerMetadata: {
         bannerType: "trialCompleted",
@@ -130,8 +122,6 @@ function checkInternalTestAccount(email) {
       subscriptionType: "monthly",
       originalTransactionId: "test_premium_cancelled_transaction_001",
       productId: "com.pikabook.premium.monthly",
-      hasEverUsedTrial: true,
-      hasEverUsedPremium: true,
       // 🎯 배너 전용 메타데이터
       bannerMetadata: {
         bannerType: "premiumCancelled",
@@ -148,8 +138,6 @@ function checkInternalTestAccount(email) {
       subscriptionType: null,
       originalTransactionId: "test_premium_expired_transaction_001",
       productId: null,
-      hasEverUsedTrial: true,
-      hasEverUsedPremium: true,
       // 🎯 배너 전용 메타데이터
       bannerMetadata: {
         bannerType: "premiumExpired",
@@ -167,8 +155,6 @@ function checkInternalTestAccount(email) {
       subscriptionType: "monthly",
       originalTransactionId: "test_premium_grace_transaction_001",
       productId: "com.pikabook.premium.monthly",
-      hasEverUsedTrial: true,
-      hasEverUsedPremium: true,
       // 🎯 배너 전용 메타데이터
       bannerMetadata: {
         bannerType: "premiumGrace",
@@ -186,10 +172,8 @@ function checkInternalTestAccount(email) {
       subscriptionType: null,
       originalTransactionId: "test_refunded_transaction_001",
       productId: null,
-      hasEverUsedTrial: true,
-      hasEverUsedPremium: true,
     },
-
+      
   };
 
   const accountInfo = INTERNAL_TEST_ACCOUNTS[email];

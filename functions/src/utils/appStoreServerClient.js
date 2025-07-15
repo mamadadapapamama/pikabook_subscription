@@ -114,14 +114,14 @@ class AppStoreServerClient {
    * @param {string} originalTransactionId - 원본 트랜잭션 ID
    * @return {Promise<object>} 조회 결과
    */
-  async getSubscriptionStatuses(originalTransactionId) {
+  async getSubscriptionStatus(originalTransactionId) {
     try {
       console.log("🔍 구독 상태 조회 시작:", originalTransactionId);
 
       const client = this.initialize();
 
       // 🚀 공식 라이브러리로 구독 상태 조회
-      const response = await client.getSubscriptionStatuses(
+      const response = await client.getSubscriptionStatus(
         originalTransactionId,
       );
 
