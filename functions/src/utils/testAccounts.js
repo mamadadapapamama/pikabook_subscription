@@ -1,10 +1,41 @@
 // 📁 functions/utils/testAccounts.js - 내부 테스트 계정
 const {Entitlement, SubscriptionStatus} = require("../shared/constant");
-const {
-  getDateAfterYears,
-  getDateAfterDays,
-  getDateBeforeDays,
-} = require("./dates");
+
+/**
+ * 📅 날짜 계산 유틸리티 함수들
+ */
+/**
+ * 현재 날짜에서 지정된 연도 후의 날짜 계산
+ * @param {number} years - 더할 연도 수
+ * @return {string} ISO 형식의 날짜 문자열
+ */
+function getDateAfterYears(years) {
+  const date = new Date();
+  date.setFullYear(date.getFullYear() + years);
+  return date.toISOString();
+}
+
+/**
+ * 현재 날짜에서 지정된 일수 후의 날짜 계산
+ * @param {number} days - 더할 일수
+ * @return {string} ISO 형식의 날짜 문자열
+ */
+function getDateAfterDays(days) {
+  const date = new Date();
+  date.setDate(date.getDate() + days);
+  return date.toISOString();
+}
+
+/**
+ * 현재 날짜에서 지정된 일수 전의 날짜 계산
+ * @param {number} days - 뺄 일수
+ * @return {string} ISO 형식의 날짜 문자열
+ */
+function getDateBeforeDays(days) {
+  const date = new Date();
+  date.setDate(date.getDate() - days);
+  return date.toISOString();
+}
 
 /**
  * 내부 테스트 계정 체크

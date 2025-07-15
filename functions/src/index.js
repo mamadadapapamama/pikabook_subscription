@@ -4,17 +4,13 @@ const admin = require("firebase-admin");
 // Firebase Admin 초기화
 admin.initializeApp();
 
-const {subCheckSubscriptionStatus} = require(
-  "./subscription/checkSubscriptionStatus.js",
-);
+const {subCheckSubscriptionStatus} = require("./subscription/checkSubscriptionStatus");
 const {appStoreNotifications} = require("./webhook/appStoreNotifications");
-const {extractOriginalTransactionId} = require(
-  "./subscription/extractOriginalTransactionId.js",
-);
+const {syncPurchaseInfo} = require("./subscription/syncPurchaseInfo");
 
-// 구독 관련 함수들
-exports.sub_checkSubscriptionStatus = subCheckSubscriptionStatus;
-exports.extractOriginalTransactionId = extractOriginalTransactionId;
+// 🎯 구독 관련 함수들
+exports.subCheckSubscriptionStatus = subCheckSubscriptionStatus;
+exports.syncPurchaseInfo = syncPurchaseInfo;
 
 // 웹훅 함수들
 exports.appStoreNotifications = appStoreNotifications;

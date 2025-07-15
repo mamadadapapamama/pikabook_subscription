@@ -14,6 +14,7 @@ const SubscriptionStatus = {
   CANCELLED: "cancelled",
   EXPIRED: "expired",
   REFUNDED: "refunded",
+  NEVER_SUBSCRIBED: "never_subscribed", // 신규 가입자
 };
 
 const APP_STORE_SERVER_API_URL = "https://api.storekit.itunes.apple.com";

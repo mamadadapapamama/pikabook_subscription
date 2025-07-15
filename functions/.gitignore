@@ -4,6 +4,7 @@ lib/**/*.js.map
 
 # Environment variables
 .env
+.DS_Store
 
 # TypeScript v1 declaration files
 typings/

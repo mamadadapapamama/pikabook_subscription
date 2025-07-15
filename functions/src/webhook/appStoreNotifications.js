@@ -280,11 +280,27 @@ async function processNotification(
   }
 
   // Firestore 업데이트
-  // Firestore 업데이트
   try {
+    // 🎯 새로운 구조로 변환
+    const cacheData = convertToNewStructure(subscriptionUpdate, notificationType, subtype);
+
     await db.collection("users").doc(userId).update({
+      // 🔄 기존 구조 (호환성 유지)
       subscription: subscriptionUpdate,
+
+      // 🎯 새로운 캐시 시스템 연동
+      cachedSubscription: {
+        subscription: cacheData,
+        lastCacheAt: admin.firestore.FieldValue.serverTimestamp(),
+        cacheSource: "webhook-real-time",
+        cacheVersion: "settings-optimized-v1",
+        notificationType: notificationType,
+        subtype: subtype,
+      },
+
+      // 메타데이터
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+
       // 🎯 EntitlementEngine 실시간 알림용
       webhookUpdate: {
         notificationType: notificationType,
@@ -294,17 +310,100 @@ async function processNotification(
         processed: false,
       },
     });
-    console.log("✅ Firestore 업데이트 완료:", {
+
+    console.log("✅ Firestore 업데이트 완료 (캐시 포함):", {
       userId: userId,
       plan: subscriptionUpdate.plan,
       status: subscriptionUpdate.status,
-      autoRenewStatus: subscriptionUpdate.autoRenewStatus,
-      isCancelled: subscriptionUpdate.isCancelled,
+      entitlement: cacheData.entitlement,
+      subscriptionStatus: cacheData.subscriptionStatus,
+      cacheSource: "webhook-real-time",
     });
   } catch (error) {
     console.error("💥 Firestore 업데이트 실패:", error);
     throw error;
   }
+}
+
+/**
+ * 🎯 기존 구조를 새로운 캐시 구조로 변환
+ * @param {object} subscriptionUpdate - 기존 구독 업데이트 정보
+ * @param {string} notificationType - 알림 타입
+ * @param {string} subtype - 알림 서브타입
+ * @return {object} 새로운 구조의 캐시 데이터
+ */
+function convertToNewStructure(subscriptionUpdate, notificationType, subtype) {
+  const {Entitlement, SubscriptionStatus} = require("../shared/constant");
+
+  // 기본값 설정
+  const result = {
+    entitlement: Entitlement.FREE,
+    subscriptionStatus: SubscriptionStatus.ACTIVE,
+    hasUsedTrial: false,
+    autoRenewEnabled: subscriptionUpdate.autoRenewStatus || false,
+    subscriptionType: subscriptionUpdate.plan === "premium" ? "monthly" : "monthly",
+    expirationDate: subscriptionUpdate.expiryDate?.toMillis()?.toString() || null,
+    hasEverUsedTrial: subscriptionUpdate.isFreeTrial || false,
+    hasEverUsedPremium: subscriptionUpdate.plan === "premium" || false,
+    lastNotificationType: notificationType,
+    lastNotificationSubtype: subtype,
+    dataSource: "webhook-real-time",
+  };
+
+  // 🎯 Entitlement 결정
+  const now = Date.now();
+  const expiryTime = subscriptionUpdate.expiryDate?.toMillis() || 0;
+  const isExpired = expiryTime > 0 && expiryTime < now;
+
+  if (!isExpired && subscriptionUpdate.status === "active") {
+    if (subscriptionUpdate.isFreeTrial) {
+      result.entitlement = Entitlement.TRIAL;
+      result.hasUsedTrial = true;
+    } else if (subscriptionUpdate.plan === "premium") {
+      result.entitlement = Entitlement.PREMIUM;
+    }
+  }
+
+  // 🎯 SubscriptionStatus 결정
+  if (subscriptionUpdate.status === "revoked") {
+    result.subscriptionStatus = SubscriptionStatus.REFUNDED;
+    result.entitlement = Entitlement.FREE;
+  } else if (subscriptionUpdate.status === "expired") {
+    result.subscriptionStatus = SubscriptionStatus.EXPIRED;
+    result.entitlement = Entitlement.FREE;
+  } else if (subscriptionUpdate.isCancelled && subscriptionUpdate.status === "active") {
+    result.subscriptionStatus = SubscriptionStatus.CANCELLING;
+    // 취소했지만 아직 유효하면 entitlement 유지
+  } else if (subscriptionUpdate.status === "active") {
+    result.subscriptionStatus = SubscriptionStatus.ACTIVE;
+  }
+
+  // 🎯 특별한 알림 타입 처리
+  if (notificationType === "SUBSCRIBED") {
+    result.subscriptionStatus = SubscriptionStatus.ACTIVE;
+  } else if (notificationType === "DID_CHANGE_RENEWAL_STATUS") {
+    if (subscriptionUpdate.autoRenewStatus) {
+      result.subscriptionStatus = SubscriptionStatus.ACTIVE;
+    } else {
+      result.subscriptionStatus = SubscriptionStatus.CANCELLING;
+    }
+  } else if (notificationType === "EXPIRED") {
+    result.subscriptionStatus = SubscriptionStatus.EXPIRED;
+    result.entitlement = Entitlement.FREE;
+  } else if (notificationType === "REFUND") {
+    result.subscriptionStatus = SubscriptionStatus.REFUNDED;
+    result.entitlement = Entitlement.FREE;
+  }
+
+  console.log("🎯 웹훅 데이터 변환 완료:", {
+    notificationType: notificationType,
+    subtype: subtype,
+    entitlement: result.entitlement,
+    subscriptionStatus: result.subscriptionStatus,
+    hasUsedTrial: result.hasUsedTrial,
+  });
+
+  return result;
 }
 
 /**
