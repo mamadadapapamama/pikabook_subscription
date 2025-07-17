@@ -1,5 +1,8 @@
 {
   "projects": {
-    "default": "mylingowith"
-  }
+    "default": "mylingowith",
+    "debug": "mylingowith"
+  },
+  "targets": {},
+  "etags": {}
 }

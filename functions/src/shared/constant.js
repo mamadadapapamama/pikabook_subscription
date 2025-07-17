@@ -23,6 +23,4 @@ module.exports = {
   Entitlement,
   SubscriptionStatus,
   APP_STORE_SERVER_API_URL,
-  // 하위 호환성을 위해 PlanStatus도 유지 (deprecate 예정)
-  PlanStatus: Entitlement,
 };

@@ -10,10 +10,20 @@ const {
   appstoreIssuerId,
   appstorePrivateKey,
   appstoreBundleId,
+  appstoreEnvironment,
 } = require("../utils/appStoreServerClient");
 
 // 🎯 캐시 유효 시간 (10분)
 const CACHE_DURATION_MS = 10 * 60 * 1000;
+
+// 🎯 중복 호출 방지 시간 (5분) - 구독 상태는 자주 변경되지 않음
+const DUPLICATE_CALL_PREVENTION_MS = 5 * 60 * 1000;
+
+// 🎯 디버그 모드 설정 (환경 변수 기반)
+const kDebugMode = process.env.NODE_ENV === 'development' || process.env.DEBUG === 'true';
+
+// 🎯 중복 호출 방지용 맵
+const userCallTimestamps = new Map();
 
 /**
  * 🎯 설정 화면 전용: App Store Server API + 캐시 조합
@@ -32,6 +42,7 @@ const subCheckSubscriptionStatus = onCall({
     appstoreIssuerId,
     appstorePrivateKey,
     appstoreBundleId,
+    appstoreEnvironment,
   ],
 }, async (request) => {
   try {
@@ -43,10 +54,36 @@ const subCheckSubscriptionStatus = onCall({
 
     const userId = request.auth.uid;
     const email = request.auth.token?.email;
+    const forceRefresh = request.data?.forceRefresh || false;
+    const now = Date.now();
+
+    // 🎯 중복 호출 감지 (1초 내 호출 제한)
+    const lastCallTime = userCallTimestamps.get(userId);
+    if (!forceRefresh && lastCallTime && (now - lastCallTime) < DUPLICATE_CALL_PREVENTION_MS) {
+      console.log(`⚠️ 중복 호출 감지: ${userId}, 간격: ${now - lastCallTime}ms`);
+      
+      // 캐시된 데이터 즉시 반환
+      const cachedData = await getCachedSubscriptionStatus(userId);
+      if (cachedData) {
+        return {
+          success: true,
+          subscription: cachedData.subscription,
+          dataSource: "duplicate-call-prevention",
+          callInterval: now - lastCallTime,
+          warning: "중복 호출 방지로 캐시 응답",
+          version: "settings-optimized-v1",
+        };
+      }
+    }
+
+    // 호출 시간 기록
+    userCallTimestamps.set(userId, now);
 
     console.log("📱 설정 화면 구독 상태 조회:", {
       userId: userId,
       email: email,
+      forceRefresh: forceRefresh,
+      callInterval: lastCallTime ? `${now - lastCallTime}ms` : "첫 호출",
     });
 
     // 🎯 Step 1: 내부 테스트 계정 확인 (최우선)
@@ -62,26 +99,32 @@ const subCheckSubscriptionStatus = onCall({
       };
     }
 
-    // 🎯 Step 2: 캐시된 구독 상태 확인
-    const cachedData = await getCachedSubscriptionStatus(userId);
+    // 🎯 Step 2: 강제 새로고침 확인
+    if (forceRefresh) {
+      console.log("🔄 강제 새로고침 - 캐시 무시하고 바로 API 호출");
+    } else {
+      // 🎯 Step 2: 캐시된 구독 상태 확인
+      const cachedData = await getCachedSubscriptionStatus(userId);
 
-    if (cachedData && !isCacheExpired(cachedData)) {
-      console.log("⚡ 캐시된 구독 상태 반환:", {
-        entitlement: cachedData.subscription.entitlement,
-        cacheAge: getCacheAge(cachedData) + "ms",
-      });
+      if (cachedData && !isCacheExpired(cachedData)) {
+        console.log("⚡ 캐시된 구독 상태 반환:", {
+          entitlement: cachedData.subscription.entitlement,
+          cacheAge: getCacheAge(cachedData) + "ms",
+        });
 
-      return {
-        success: true,
-        subscription: cachedData.subscription,
-        dataSource: "cache",
-        cacheAge: getCacheAge(cachedData),
-        version: "settings-optimized-v1",
-      };
+        return {
+          success: true,
+          subscription: cachedData.subscription,
+          dataSource: "cache",
+          cacheAge: getCacheAge(cachedData),
+          version: "settings-optimized-v1",
+        };
+      }
+
+      console.log("🔍 캐시 만료 또는 없음 - App Store Server API 호출");
     }
 
-    // 🎯 Step 3: 캐시 만료 시 App Store Server API 호출
-    console.log("🔍 캐시 만료 또는 없음 - App Store Server API 호출");
+    // 🎯 Step 3: App Store Server API 호출 (캐시 만료 또는 강제 새로고침)
 
     const freshData = await fetchFreshSubscriptionStatus(userId);
 
@@ -97,8 +140,9 @@ const subCheckSubscriptionStatus = onCall({
       return {
         success: true,
         subscription: freshData,
-        dataSource: "fresh-api",
+        dataSource: forceRefresh ? "force-refresh" : "fresh-api",
         cacheAge: 0,
+        forceRefresh: forceRefresh,
         version: "settings-optimized-v1",
       };
     }
@@ -120,6 +164,7 @@ const subCheckSubscriptionStatus = onCall({
       subscription: defaultData,
       dataSource: "default",
       cacheAge: 0,
+      forceRefresh: forceRefresh,
       version: "settings-optimized-v1",
     };
   } catch (error) {
@@ -140,14 +185,14 @@ const subCheckSubscriptionStatus = onCall({
  */
 async function getCachedSubscriptionStatus(userId) {
   try {
-    const db = admin.firestore();
-    const userDoc = await db.collection("users").doc(userId).get();
+          const db = admin.firestore();
+          const userDoc = await db.collection("users").doc(userId).get();
 
     if (!userDoc.exists) {
       return null;
     }
 
-    const userData = userDoc.data();
+            const userData = userDoc.data();
     const subscriptionData = userData.subscriptionData;
     
     if (subscriptionData && subscriptionData.lastUpdatedAt) {
@@ -201,13 +246,13 @@ function isCacheExpired(cachedData) {
 function getCacheAge(cachedData) {
   if (!cachedData.lastCacheAt) {
     return 0;
-  }
+          }
 
   return Date.now() - cachedData.lastCacheAt.toMillis();
-}
+        }
 
 /**
- * 🔍 App Store Server API로 최신 구독 상태 조회
+ * 🔍 App Store Server API로 최신 구독 상태 조회 (단순화)
  * @param {string} userId - 사용자 ID
  * @return {Promise<object|null>} 최신 구독 상태
  */
@@ -229,39 +274,165 @@ async function fetchFreshSubscriptionStatus(userId) {
       userData.originalTransactionId ||
       userData.subscription?.originalTransactionId;
 
-    if (!originalTransactionId) {
-      console.log("⚠️ originalTransactionId 없음 - 구매 이력 없음");
+    // 🎯 최신 트랜잭션 ID 추출 (API 호출용)
+    const lastTransactionId = userData.subscriptionData?.lastTransactionId || 
+      userData.lastTransactionId ||
+      originalTransactionId;
+
+    if (!lastTransactionId) {
+      console.log("⚠️ transactionId 없음 - 구매 이력 없음");
       return null;
     }
 
-    console.log("🚀 App Store Server API 호출:", originalTransactionId, {
-      dataSource: userData.subscriptionData?.originalTransactionId ? "subscriptionData" : 
-                 userData.originalTransactionId ? "root" : "subscription"
+    console.log("🚀 App Store Server API 호출 (단순화):", {
+      lastTransactionId: kDebugMode ? lastTransactionId : "***",
+      originalTransactionId: kDebugMode ? originalTransactionId : "***",
+      dataSource: userData.subscriptionData?.lastTransactionId ? "subscriptionData" : 
+                 userData.lastTransactionId ? "root" : "original"
     });
 
-    // 🎯 App Store Server API로 구독 상태 조회
-    const subscriptionResult = await appStoreServerClient
-      .getSubscriptionStatus(originalTransactionId);
+    // 🎯 단순한 Transaction Info 조회 (History 분석 없음)
+    console.log("🔄 단순한 getTransactionInfo 호출 (웹훅에서 History 분석 완료)");
+    const transactionResult = await appStoreServerClient
+      .getTransactionInfo(lastTransactionId);
 
-    if (!subscriptionResult.success) {
-      console.error("❌ App Store Server API 호출 실패:", subscriptionResult.error);
+    if (!transactionResult.success) {
+      console.error("❌ Transaction Info 호출 실패:", transactionResult.error);
       return null;
     }
 
-    // 🎯 구독 상태 분석
-    const subscriptionInfo = await analyzeSubscriptionStatuses(
-      subscriptionResult.data,
-    );
+    // 🎯 단순한 트랜잭션 정보 기반 기본 상태 (웹훅이 정확한 상태 업데이트)
+    const transactionInfo = transactionResult.data;
+    const basicSubscriptionInfo = await createBasicSubscriptionInfo(transactionInfo);
 
-    console.log("✅ 최신 구독 상태 분석 완료:", {
-      entitlement: subscriptionInfo.entitlement,
-      subscriptionStatus: subscriptionInfo.subscriptionStatus,
+    console.log("✅ 기본 구독 상태 조회 완료 (웹훅이 정확한 상태 관리):", {
+      entitlement: basicSubscriptionInfo.entitlement,
+      subscriptionStatus: basicSubscriptionInfo.subscriptionStatus,
+      note: "웹훅에서 정확한 상태를 실시간 업데이트함",
     });
 
-    return subscriptionInfo;
+    return basicSubscriptionInfo;
   } catch (error) {
-    console.error("❌ 최신 구독 상태 조회 실패:", error.message);
+    console.error("❌ 기본 구독 상태 조회 실패:", error.message);
     return null;
+  }
+}
+
+/**
+ * 🎯 기본 구독 정보 생성 (단순화)
+ * @param {object} transactionInfo - 트랜잭션 정보
+ * @return {Promise<object>} 기본 구독 정보
+ */
+async function createBasicSubscriptionInfo(transactionInfo) {
+  try {
+    // 기본값 설정
+    const result = {
+      entitlement: Entitlement.FREE,
+      subscriptionStatus: SubscriptionStatus.NEVER_SUBSCRIBED,
+      hasUsedTrial: false, // 웹훅에서 정확한 값 업데이트
+      autoRenewEnabled: false,
+      subscriptionType: null,
+      expirationDate: null,
+      
+      // 🎯 Apple Best Practice: 중요한 추가 정보들 (기본값)
+      hasFamilySharedSubscription: false,
+      environment: null,
+      subscriptionStartDate: null,
+      userAccountToken: null,
+    };
+
+    const decodedTransaction = decodeJWS(transactionInfo.signedTransactionInfo);
+    
+    if (!decodedTransaction) {
+      console.log("⚠️ 트랜잭션 정보 디코딩 실패");
+      return result;
+    }
+
+    const transactionData = decodedTransaction;
+    const now = Date.now();
+    const expiresDate = parseInt(transactionData.expiresDate) || 0;
+    const isExpired = expiresDate > 0 && expiresDate < now;
+    const isRevoked = !!transactionData.revocationDate;
+    const isCurrentTransactionTrial = transactionData.offerType === 1;
+
+    result.expirationDate = expiresDate.toString();
+
+    console.log("🎯 기본 트랜잭션 정보 분석:", {
+      transactionId: kDebugMode ? transactionData.transactionId : "***",
+      productId: transactionData.productId,
+      offerType: transactionData.offerType,
+      isExpired: isExpired,
+      isRevoked: isRevoked,
+      isCurrentTransactionTrial: isCurrentTransactionTrial,
+      expiresDate: new Date(expiresDate).toISOString(),
+      note: "웹훅에서 정확한 hasUsedTrial 값 업데이트",
+    });
+
+    // 🎯 기본 Entitlement 결정 (웹훅이 정확한 상태 업데이트)
+    if (isRevoked) {
+      result.entitlement = Entitlement.FREE;
+      result.subscriptionStatus = SubscriptionStatus.REFUNDED;
+      console.log("🚫 구독 취소됨 (Revoked)");
+    } else if (isExpired) {
+      result.entitlement = Entitlement.FREE;
+      result.subscriptionStatus = SubscriptionStatus.EXPIRED;
+      console.log("⏰ 구독 만료됨 (Expired)");
+    } else {
+      // 아직 유효한 구독
+      if (isCurrentTransactionTrial) {
+        result.entitlement = Entitlement.TRIAL;
+        result.subscriptionStatus = SubscriptionStatus.ACTIVE;
+        console.log("🎯 현재 활성 Trial 구독");
+      } else {
+        result.entitlement = Entitlement.PREMIUM;
+        result.subscriptionStatus = SubscriptionStatus.ACTIVE;
+        console.log("💎 현재 활성 Premium 구독");
+      }
+      result.autoRenewEnabled = true;
+    }
+
+    // 🎯 구독 타입 결정
+    if (transactionData.productId?.includes("yearly")) {
+      result.subscriptionType = "yearly";
+    } else if (transactionData.productId?.includes("monthly")) {
+      result.subscriptionType = "monthly";
+    }
+
+    // 🎯 Apple Best Practice: 중요한 추가 정보들
+    result.hasFamilySharedSubscription = transactionData.inAppOwnershipType === "FAMILY_SHARED";
+    result.environment = transactionData.environment;
+    result.subscriptionStartDate = transactionData.originalPurchaseDate;
+    
+    console.log("✅ 기본 구독 정보 생성 완료:", {
+      entitlement: result.entitlement,
+      subscriptionStatus: result.subscriptionStatus,
+      hasUsedTrial: result.hasUsedTrial,
+      autoRenewEnabled: result.autoRenewEnabled,
+      subscriptionType: result.subscriptionType,
+      hasFamilySharedSubscription: result.hasFamilySharedSubscription,
+      environment: result.environment,
+      note: "웹훅에서 정확한 상태를 실시간 업데이트함",
+    });
+
+    return result;
+  } catch (error) {
+    console.error("❌ 기본 구독 정보 생성 실패:", error.message);
+    return {
+      entitlement: Entitlement.FREE,
+      subscriptionStatus: SubscriptionStatus.NEVER_SUBSCRIBED,
+      hasUsedTrial: false,
+      autoRenewEnabled: false,
+      subscriptionType: null,
+      expirationDate: null,
+      
+      // 🎯 Apple Best Practice: 중요한 추가 정보들
+      hasFamilySharedSubscription: false,
+      environment: null,
+      subscriptionStartDate: null,
+      userAccountToken: null,
+      
+      error: error.message,
+    };
   }
 }
 
@@ -276,9 +447,12 @@ async function saveCachedSubscriptionStatus(userId, subscriptionData) {
 
     const db = admin.firestore();
     
+    // 🎯 민감한 정보 제외 (Firestore 저장용)
+    const {userAccountToken, ...safeSubscriptionData} = subscriptionData;
+    
     // 🎯 통합 구독 데이터 구조 (간소화)
     const unifiedSubscriptionData = {
-      ...subscriptionData,
+      ...safeSubscriptionData,
       
       // 메타데이터 (간소화)
       lastUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -286,8 +460,8 @@ async function saveCachedSubscriptionStatus(userId, subscriptionData) {
       dataSource: "fresh-api",
       
       // 포맷 변환
-      expirationDate: subscriptionData.expirationDate ?
-        parseInt(subscriptionData.expirationDate) : null,
+      expirationDate: safeSubscriptionData.expirationDate ?
+        parseInt(safeSubscriptionData.expirationDate) : null,
     };
 
     const updateData = {
@@ -298,10 +472,11 @@ async function saveCachedSubscriptionStatus(userId, subscriptionData) {
     await db.collection("users").doc(userId).set(updateData, {merge: true});
 
     console.log("✅ 구독 상태 캐시 저장 완료 (통합 구조):", {
-      entitlement: subscriptionData.entitlement,
-      subscriptionStatus: subscriptionData.subscriptionStatus,
-      hasUsedTrial: subscriptionData.hasUsedTrial,
-      autoRenewEnabled: subscriptionData.autoRenewEnabled,
+      entitlement: safeSubscriptionData.entitlement,
+      subscriptionStatus: safeSubscriptionData.subscriptionStatus,
+      hasUsedTrial: safeSubscriptionData.hasUsedTrial,
+      autoRenewEnabled: safeSubscriptionData.autoRenewEnabled,
+      userAccountToken: userAccountToken ? "*** (저장되지 않음)" : null,
     });
   } catch (error) {
     console.error("❌ 캐시 저장 실패:", error.message);
@@ -309,246 +484,39 @@ async function saveCachedSubscriptionStatus(userId, subscriptionData) {
   }
 }
 
-/**
- * 🎯 구독 상태 분석 (전체 히스토리 기반)
- * @param {object} subscriptionStatuses - Apple 구독 상태 데이터
- * @return {Promise<object>} 분석된 구독 정보
- */
-async function analyzeSubscriptionStatuses(subscriptionStatuses) {
-  try {
-    // 기본값 설정
-    const result = {
-      entitlement: Entitlement.FREE,
-      subscriptionStatus: SubscriptionStatus.ACTIVE,
-      hasUsedTrial: false,
-      autoRenewEnabled: false,
-      subscriptionType: null,
-      expirationDate: null,
-    };
 
-    // 구독 그룹 데이터 확인
-    if (!subscriptionStatuses || !subscriptionStatuses.length) {
-      console.log("⚠️ 구독 상태 데이터가 없습니다");
-      return result;
-    }
 
-    // 첫 번째 구독 그룹 가져오기
-    const subscriptionGroup = subscriptionStatuses[0];
-    const lastTransactions = subscriptionGroup.lastTransactions;
 
-    if (!lastTransactions || !lastTransactions.length) {
-      console.log("⚠️ 최신 트랜잭션 데이터가 없습니다");
-      return result;
-    }
 
-    // 🎯 전체 히스토리 조회해서 trial 사용 여부 확인
-    const originalTransactionId = await getOriginalTransactionId(lastTransactions);
-    if (originalTransactionId) {
-      result.hasUsedTrial = await checkTrialUsageFromHistory(originalTransactionId);
-    }
+// 🎯 analyzeTransactionHistory 함수 제거됨 - 웹훅으로 이동됨
 
-    // 🎯 각 트랜잭션의 상태 분석 (현재 상태 확인용)
-    for (const transaction of lastTransactions) {
-      const signedTransactionInfo = transaction.signedTransactionInfo;
-      const status = transaction.status;
-
-      // 🎯 JWT 디코딩하여 트랜잭션 정보 추출
-      const decodedTransaction = await decodeTransactionJWT(signedTransactionInfo);
-
-      if (!decodedTransaction.success) {
-        console.error("❌ 트랜잭션 JWT 디코딩 실패:", decodedTransaction.error);
-        continue;
-      }
-
-      const transactionData = decodedTransaction.data;
-
-      // 🎯 구독 타입 및 상태 분석
-      const isFreeTrial = transactionData.offerType === 5; // Free Trial
-      const now = Date.now();
-      const expiresDate = transactionData.expiresDate ?
-        parseInt(transactionData.expiresDate) : 0;
-      const isExpired = expiresDate > 0 && expiresDate < now;
-
-      // 🎯 구독 타입 결정
-      if (transactionData.productId?.includes("yearly")) {
-        result.subscriptionType = "yearly";
-      } else if (transactionData.productId?.includes("monthly")) {
-        result.subscriptionType = "monthly";
-      }
-
-      // 🎯 만료일 설정
-      if (expiresDate > 0) {
-        result.expirationDate = expiresDate.toString();
-      }
-
-      // 🎯 활성 구독 상태 확인
-      if (status === 1) { // Active
-        result.autoRenewEnabled = true;
-        result.expirationDate = expiresDate.toString();
-
-        if (isFreeTrial) {
-          result.entitlement = Entitlement.TRIAL;
-        } else {
-          result.entitlement = Entitlement.PREMIUM;
-        }
-        result.subscriptionStatus = SubscriptionStatus.ACTIVE;
-      } else if (status === 2) { // Cancelled but still active
-        result.autoRenewEnabled = false;
-        result.expirationDate = expiresDate.toString();
-
-        if (isFreeTrial) {
-          result.entitlement = isExpired ? Entitlement.FREE : Entitlement.TRIAL;
-        } else {
-          result.entitlement = isExpired ? Entitlement.FREE : Entitlement.PREMIUM;
-        }
-
-        if (isExpired) {
-          result.subscriptionStatus = SubscriptionStatus.EXPIRED;
-        } else {
-          result.subscriptionStatus = SubscriptionStatus.CANCELLING;
-        }
-      } else if (status === 3) { // Billing retry
-        result.autoRenewEnabled = true;
-        result.expirationDate = expiresDate.toString();
-        result.entitlement = Entitlement.PREMIUM;
-        result.subscriptionStatus = SubscriptionStatus.ACTIVE;
-      } else if (status === 4) { // Grace period
-        result.autoRenewEnabled = true;
-        result.expirationDate = expiresDate.toString();
-        result.entitlement = Entitlement.PREMIUM;
-        result.subscriptionStatus = SubscriptionStatus.ACTIVE;
-      } else if (status === 5) { // Revoked
-        result.autoRenewEnabled = false;
-        result.entitlement = Entitlement.FREE;
-        result.subscriptionStatus = SubscriptionStatus.REFUNDED;
-      }
-    }
-
-    console.log("✅ 구독 상태 분석 완료:", {
-      entitlement: result.entitlement,
-      subscriptionStatus: result.subscriptionStatus,
-      hasUsedTrial: result.hasUsedTrial,
-      autoRenewEnabled: result.autoRenewEnabled,
-      subscriptionType: result.subscriptionType,
-    });
-
-    return result;
-  } catch (error) {
-    console.error("❌ 구독 상태 분석 중 오류:", error.message);
-    return {
-      entitlement: Entitlement.FREE,
-      subscriptionStatus: SubscriptionStatus.ACTIVE,
-      hasUsedTrial: false,
-      autoRenewEnabled: false,
-      error: error.message,
-    };
-  }
-}
+// 🎯 getOfferTypeDescription 함수 제거됨 - 웹훅으로 이동됨
 
 /**
- * 🔍 originalTransactionId 추출
- * @param {Array} lastTransactions - 최신 트랜잭션 배열
- * @return {Promise<string|null>} originalTransactionId
+ * JWS(JSON Web Signature) 디코딩 (검증 없이)
+ * @param {string} jws - JSON Web Signature 문자열
+ * @return {Object|null} 디코딩된 페이로드 또는 null
  */
-async function getOriginalTransactionId(lastTransactions) {
+function decodeJWS(jws) {
   try {
-    if (!lastTransactions || !lastTransactions.length) {
+    // JWT의 중간 부분(payload)만 디코딩
+    const parts = jws.split(".");
+    if (parts.length !== 3) {
       return null;
     }
 
-    const firstTransaction = lastTransactions[0];
-    const decodedTransaction = await decodeTransactionJWT(firstTransaction.signedTransactionInfo);
-    
-    if (decodedTransaction.success) {
-      return decodedTransaction.data.originalTransactionId;
-    }
-
-    return null;
-  } catch (error) {
-    console.error("❌ originalTransactionId 추출 실패:", error.message);
-    return null;
-  }
-}
-
-/**
- * 🔍 전체 히스토리에서 trial 사용 여부 확인
- * @param {string} originalTransactionId - 원본 트랜잭션 ID
- * @return {Promise<boolean>} trial 사용 여부
- */
-async function checkTrialUsageFromHistory(originalTransactionId) {
-  try {
-    console.log("🔍 전체 히스토리에서 trial 사용 여부 확인 시작:", originalTransactionId);
-
-    // App Store Server API로 전체 히스토리 조회
-    const historyResult = await appStoreServerClient.getTransactionHistory(originalTransactionId);
-    
-    if (!historyResult.success) {
-      console.error("❌ 트랜잭션 히스토리 조회 실패:", historyResult.error);
-      return false;
-    }
-
-    const transactions = historyResult.data.signedTransactions || [];
-    console.log(`📋 전체 트랜잭션 수: ${transactions.length}`);
-
-    // 모든 트랜잭션을 확인하여 trial 사용 여부 체크
-    for (const signedTransaction of transactions) {
-      const decodedTransaction = await decodeTransactionJWT(signedTransaction);
-      
-      if (!decodedTransaction.success) {
-        continue;
-      }
-
-      const transactionData = decodedTransaction.data;
-      const isFreeTrial = transactionData.offerType === 5; // Free Trial
-      
-      if (isFreeTrial) {
-        console.log("✅ 히스토리에서 trial 사용 확인됨:", {
-          transactionId: transactionData.transactionId,
-          productId: transactionData.productId,
-          offerType: transactionData.offerType,
-        });
-        return true;
-      }
-    }
-
-    console.log("❌ 히스토리에서 trial 사용 확인되지 않음");
-    return false;
-  } catch (error) {
-    console.error("❌ 히스토리 trial 확인 중 오류:", error.message);
-    return false;
-  }
-}
-
-/**
- * 🔓 트랜잭션 JWT 디코딩
- * @param {string} signedTransaction - 서명된 트랜잭션 정보
- * @return {Promise<object>} 디코딩 결과
- */
-async function decodeTransactionJWT(signedTransaction) {
-  try {
-    const parts = signedTransaction.split(".");
-    if (parts.length !== 3) {
-      return {
-        success: false,
-        error: "Invalid JWT format",
-      };
-    }
-
     const payload = parts[1];
-    const decodedPayload = Buffer.from(payload, "base64url").toString("utf8");
-    const parsedPayload = JSON.parse(decodedPayload);
-
-    return {
-      success: true,
-      data: parsedPayload,
-    };
+    const decoded = Buffer.from(payload, "base64url").toString("utf8");
+    return JSON.parse(decoded);
   } catch (error) {
-    return {
-      success: false,
-      error: error.message,
-    };
+    console.error("JWS 디코딩 오류:", error);
+    return null;
   }
 }
+
+
+
+
 
 module.exports = {
   subCheckSubscriptionStatus,

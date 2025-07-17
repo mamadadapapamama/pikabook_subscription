@@ -4,12 +4,12 @@ const {onCall, HttpsError} = require("firebase-functions/v2/https");
 const admin = require("firebase-admin");
 const {Entitlement, SubscriptionStatus} = require("../shared/constant");
 const {checkInternalTestAccount} = require("../utils/testAccounts");
-const {appStoreServerClient} = require("../utils/appStoreServerClient");
+const {inAppPurchaseClient} = require("../utils/appStoreServerClient");
 const {
-  appstoreKeyId,
-  appstoreIssuerId,
-  appstorePrivateKey,
-  appstoreBundleId,
+  iapKeyId,
+  iapIssuerId,
+  iapPrivateKey,
+  iapBundleId,
 } = require("../utils/appStoreServerClient");
 
 /**
@@ -29,10 +29,10 @@ const {
 const syncPurchaseInfo = onCall({
   region: "asia-southeast1",
   secrets: [
-    appstoreKeyId,
-    appstoreIssuerId,
-    appstorePrivateKey,
-    appstoreBundleId,
+    iapKeyId,
+    iapIssuerId,
+    iapPrivateKey,
+    iapBundleId,
   ],
 }, async (request) => {
   try {
@@ -71,7 +71,7 @@ const syncPurchaseInfo = onCall({
     }
 
     // 🎯 Step 2: JWS 직접 검증 및 트랜잭션 정보 추출
-    const transactionInfo = await verifyAndDecodeJWS(jwsRepresentation);
+    const transactionInfo = await inAppPurchaseClient.verifyJWS(jwsRepresentation);
 
     if (!transactionInfo.success) {
       console.error("❌ JWS 검증 실패:", transactionInfo.error);
@@ -101,35 +101,27 @@ const syncPurchaseInfo = onCall({
       }
     }
 
-    // 🎯 Step 4: JWS 정보로 기본 구독 상태 판단
-    const basicSubscriptionData = analyzeJWSTransaction(transaction);
-
-    // 🎯 Step 5: 구매 직후에는 JWS만 사용 (Apple 2025 Best Practice)
-    let subscriptionData;
-    const needsRealTimeStatus = request.data.checkRealTimeStatus === true; // 기본값 false로 변경
-
-    if (needsRealTimeStatus) {
-      console.log("🔍 실시간 상태 확인 요청 - App Store Server API 호출");
-      subscriptionData = await getCurrentSubscriptionStatus(
-        transaction.originalTransactionId,
-      );
-    } else {
-      console.log("⚡ [Apple Best Practice] JWS 정보만으로 빠른 응답 (구매 직후)");
-      subscriptionData = basicSubscriptionData;
-    }
-
-    // 🎯 Step 6: Firestore에 구매 정보 저장
-    await savePurchaseInfoToFirestore(userId, transaction, subscriptionData);
+    // 🎯 Step 4: Firestore에 JWS 트랜잭션 정보 저장
+    await saveJWSTransactionToFirestore(userId, transaction);
 
     console.log("✅ [Apple Best Practice] 구매 정보 동기화 완료:", {
-      entitlement: subscriptionData.entitlement,
-      subscriptionStatus: subscriptionData.subscriptionStatus,
+      transactionId: transaction.transactionId,
+      originalTransactionId: transaction.originalTransactionId,
+      productId: transaction.productId,
     });
 
     return {
       success: true,
-      subscription: subscriptionData,
-      dataSource: needsRealTimeStatus ? "jws-plus-api" : "jws-only",
+      transaction: {
+        transactionId: transaction.transactionId,
+        originalTransactionId: transaction.originalTransactionId,
+        productId: transaction.productId,
+        expiresDate: transaction.expiresDate,
+        offerType: transaction.offerType,
+        purchaseDate: transaction.purchaseDate,
+        appAccountToken: transaction.appAccountToken,
+      },
+      dataSource: "jws-only",
       version: "jwsRepresentation-v1",
       timestamp: new Date().toISOString(),
     };
@@ -144,373 +136,37 @@ const syncPurchaseInfo = onCall({
   }
 });
 
-/**
- * 🔐 JWS 검증 및 디코딩
- * @param {string} jwsRepresentation - StoreKit 2 트랜잭션 JWS
- * @return {Promise<object>} 검증 결과
- */
-async function verifyAndDecodeJWS(jwsRepresentation) {
-  try {
-    console.log("🔐 JWS 검증 및 디코딩 시작");
 
-    // JWT는 header.payload.signature 형태
-    const parts = jwsRepresentation.split(".");
-    if (parts.length !== 3) {
-      return {
-        success: false,
-        error: "Invalid JWS format",
-      };
-    }
-
-    // 🎯 Header 디코딩
-    const headerPayload = parts[0];
-    const decodedHeader = Buffer.from(headerPayload, "base64url").toString("utf8");
-    const header = JSON.parse(decodedHeader);
-
-    console.log("📋 JWS Header:", {
-      alg: header.alg,
-      kid: header.kid,
-      typ: header.typ,
-    });
-
-    // 🎯 Payload 디코딩
-    const payloadPart = parts[1];
-    const decodedPayload = Buffer.from(payloadPart, "base64url").toString("utf8");
-    const payload = JSON.parse(decodedPayload);
-
-    console.log("📄 JWS Payload Keys:", Object.keys(payload));
-
-    // 🎯 기본 검증 (실제 서명 검증은 App Store Server Library 사용 권장)
-    const requiredFields = ["transactionId", "originalTransactionId", "productId"];
-    for (const field of requiredFields) {
-      if (!payload[field]) {
-        return {
-          success: false,
-          error: `Missing required field: ${field}`,
-        };
-      }
-    }
-
-    // 🎯 환경 검증 (sandbox/production)
-    const environment = payload.environment || "Production";
-    console.log("🌍 Transaction Environment:", environment);
-
-    return {
-      success: true,
-      data: payload,
-      header: header,
-      environment: environment,
-    };
-  } catch (error) {
-    console.error("❌ JWS 검증 실패:", error.message);
-    return {
-      success: false,
-      error: error.message,
-    };
-  }
-}
 
 /**
- * ⚡ JWS 트랜잭션 정보만으로 기본 구독 상태 판단
- * @param {object} transaction - JWS 디코딩된 트랜잭션 정보
- * @return {object} 기본 구독 상태 정보
- */
-function analyzeJWSTransaction(transaction) {
-  try {
-    console.log("⚡ JWS 정보만으로 기본 구독 상태 판단");
-
-    const now = Date.now();
-    const expiresDate = transaction.expiresDate ?
-      parseInt(transaction.expiresDate) : 0;
-    const isExpired = expiresDate > 0 && expiresDate < now;
-
-    // 🎯 제품 타입 확인
-    const isFreeTrial = transaction.offerType === 5 || // Free Trial
-      transaction.offerType === 1; // Intro offer
-    const isPremium = !isFreeTrial;
-
-    // 🎯 기본 구독 상태 판단 (JWS 한계 반영)
-    const result = {
-      entitlement: Entitlement.FREE,
-      subscriptionStatus: SubscriptionStatus.ACTIVE,
-      // hasUsedTrial: JWS 단일 트랜잭션으로는 정확한 판단 불가 - 제거
-      autoRenewEnabled: true, // JWS 한계: 기본값, 웹훅에서 정확한 값 업데이트
-      subscriptionType: transaction.productId?.includes("yearly") ? "yearly" : "monthly",
-      expirationDate: expiresDate.toString(),
-      dataSource: "jws-only",
-    };
-
-    // 🎯 Entitlement 결정
-    if (!isExpired) {
-      if (isFreeTrial) {
-        result.entitlement = Entitlement.TRIAL;
-      } else if (isPremium) {
-        result.entitlement = Entitlement.PREMIUM;
-      }
-    }
-
-    // 🎯 Subscription Status 결정 (기본적인 판단만 가능)
-    if (transaction.revocationDate) {
-      result.subscriptionStatus = SubscriptionStatus.REFUNDED;
-      result.entitlement = Entitlement.FREE;
-    } else if (isExpired) {
-      result.subscriptionStatus = SubscriptionStatus.EXPIRED;
-      result.entitlement = Entitlement.FREE;
-    } else {
-      result.subscriptionStatus = SubscriptionStatus.ACTIVE;
-    }
-
-    console.log("⚡ JWS 기본 분석 완료:", {
-      entitlement: result.entitlement,
-      subscriptionStatus: result.subscriptionStatus,
-      limitations: "취소 상태는 App Store API에서만 확인 가능",
-    });
-
-    return result;
-  } catch (error) {
-    console.error("❌ JWS 기본 분석 실패:", error.message);
-    return {
-      entitlement: Entitlement.FREE,
-      subscriptionStatus: SubscriptionStatus.ACTIVE,
-      autoRenewEnabled: false,
-      subscriptionType: null,
-      expirationDate: null,
-      error: error.message,
-      dataSource: "jws-error",
-    };
-  }
-}
-
-/**
- * 🎯 현재 구독 상태 조회
- * @param {string} originalTransactionId - 원본 트랜잭션 ID
- * @return {Promise<object>} 구독 상태 정보
- */
-async function getCurrentSubscriptionStatus(originalTransactionId) {
-  try {
-    console.log("🔍 현재 구독 상태 조회 시작:", originalTransactionId);
-
-    // App Store Server API로 구독 상태 조회
-    const subscriptionResult = await appStoreServerClient
-      .getSubscriptionStatus(originalTransactionId);
-
-    if (!subscriptionResult.success) {
-      console.error("❌ 구독 상태 조회 실패:", subscriptionResult.error);
-      return {
-        entitlement: Entitlement.FREE,
-        subscriptionStatus: SubscriptionStatus.ACTIVE,
-        autoRenewEnabled: false,
-        error: subscriptionResult.error,
-      };
-    }
-
-    const subscriptionStatuses = subscriptionResult.data;
-    console.log("📦 구독 상태 데이터 수신");
-
-    // 🎯 구독 상태 분석
-    const subscriptionInfo = await analyzeSubscriptionStatuses(subscriptionStatuses);
-
-    console.log("✅ 구독 상태 분석 완료:", {
-      entitlement: subscriptionInfo.entitlement,
-      subscriptionStatus: subscriptionInfo.subscriptionStatus,
-    });
-
-    return subscriptionInfo;
-  } catch (error) {
-    console.error("❌ 구독 상태 조회 중 오류:", error.message);
-    return {
-      entitlement: Entitlement.FREE,
-      subscriptionStatus: SubscriptionStatus.ACTIVE,
-      autoRenewEnabled: false,
-      error: error.message,
-    };
-  }
-}
-
-/**
- * 🎯 구독 상태 분석 (기존 로직 재사용)
- * @param {object} subscriptionStatuses - Apple 구독 상태 데이터
- * @return {Promise<object>} 분석된 구독 정보
- */
-async function analyzeSubscriptionStatuses(subscriptionStatuses) {
-  try {
-    // 기본값 설정
-    const result = {
-      entitlement: Entitlement.FREE,
-      subscriptionStatus: SubscriptionStatus.ACTIVE,
-      // hasUsedTrial: JWS 단일 트랜잭션으로는 정확한 판단 불가 - 제거
-      autoRenewEnabled: false,
-      subscriptionType: null,
-      expirationDate: null,
-    };
-
-    // 구독 그룹 데이터 확인
-    if (!subscriptionStatuses || !subscriptionStatuses.length) {
-      console.log("⚠️ 구독 상태 데이터가 없습니다");
-      return result;
-    }
-
-    // 첫 번째 구독 그룹의 최신 구독 상태 가져오기
-    const subscriptionGroup = subscriptionStatuses[0];
-    const lastTransactions = subscriptionGroup.lastTransactions;
-
-    if (!lastTransactions || !lastTransactions.length) {
-      console.log("⚠️ 최신 트랜잭션 데이터가 없습니다");
-      return result;
-    }
-
-    // 🎯 각 트랜잭션의 상태 분석
-    for (const transaction of lastTransactions) {
-      const signedTransactionInfo = transaction.signedTransactionInfo;
-      const status = transaction.status;
-
-      // JWT 디코딩하여 트랜잭션 정보 추출
-      const decodedTransaction = await decodeTransactionJWT(signedTransactionInfo);
-
-      if (!decodedTransaction.success) {
-        console.error("❌ 트랜잭션 JWT 디코딩 실패:", decodedTransaction.error);
-        continue;
-      }
-
-      const transactionData = decodedTransaction.data;
-
-      // 🎯 구독 타입 및 상태 분석
-      const isFreeTrial = transactionData.offerType === 5; // Free Trial
-      const now = Date.now();
-      const expiresDate = transactionData.expiresDate ?
-        parseInt(transactionData.expiresDate) : 0;
-      const isExpired = expiresDate > 0 && expiresDate < now;
-
-      // 🎯 trial 경험 여부: JWS 단일 트랜잭션으로는 정확한 판단 불가 - 제거
-
-      // 🎯 구독 타입 결정
-      if (transactionData.productId?.includes("yearly")) {
-        result.subscriptionType = "yearly";
-      } else if (transactionData.productId?.includes("monthly")) {
-        result.subscriptionType = "monthly";
-      }
-
-      // 🎯 활성 구독 상태 확인
-      if (status === 1) { // Active
-        result.autoRenewEnabled = true;
-        result.expirationDate = expiresDate.toString();
-
-        if (isFreeTrial) {
-          result.entitlement = Entitlement.TRIAL;
-        } else {
-          result.entitlement = Entitlement.PREMIUM;
-        }
-        result.subscriptionStatus = SubscriptionStatus.ACTIVE;
-      } else if (status === 2) { // Cancelled but still active
-        result.autoRenewEnabled = false;
-        result.expirationDate = expiresDate.toString();
-
-        if (isFreeTrial) {
-          result.entitlement = isExpired ? Entitlement.FREE : Entitlement.TRIAL;
-        } else {
-          result.entitlement = isExpired ? Entitlement.FREE : Entitlement.PREMIUM;
-        }
-
-        if (isExpired) {
-          result.subscriptionStatus = SubscriptionStatus.EXPIRED;
-        } else {
-          result.subscriptionStatus = SubscriptionStatus.CANCELLING;
-        }
-      } else if (status === 3) { // Billing retry
-        result.autoRenewEnabled = true;
-        result.expirationDate = expiresDate.toString();
-        result.entitlement = Entitlement.PREMIUM;
-        result.subscriptionStatus = SubscriptionStatus.ACTIVE;
-      } else if (status === 4) { // Grace period
-        result.autoRenewEnabled = true;
-        result.expirationDate = expiresDate.toString();
-        result.entitlement = Entitlement.PREMIUM;
-        result.subscriptionStatus = SubscriptionStatus.ACTIVE;
-      } else if (status === 5) { // Revoked
-        result.autoRenewEnabled = false;
-        result.entitlement = Entitlement.FREE;
-        result.subscriptionStatus = SubscriptionStatus.REFUNDED;
-      }
-    }
-
-    return result;
-  } catch (error) {
-    console.error("❌ 구독 상태 분석 중 오류:", error.message);
-    return {
-      entitlement: Entitlement.FREE,
-      subscriptionStatus: SubscriptionStatus.ACTIVE,
-      autoRenewEnabled: false,
-      error: error.message,
-    };
-  }
-}
-
-/**
- * 🔓 트랜잭션 JWT 디코딩
- * @param {string} signedTransaction - 서명된 트랜잭션 정보
- * @return {Promise<object>} 디코딩 결과
- */
-async function decodeTransactionJWT(signedTransaction) {
-  try {
-    const parts = signedTransaction.split(".");
-    if (parts.length !== 3) {
-      return {
-        success: false,
-        error: "Invalid JWT format",
-      };
-    }
-
-    const payload = parts[1];
-    const decodedPayload = Buffer.from(payload, "base64url").toString("utf8");
-    const parsedPayload = JSON.parse(decodedPayload);
-
-    return {
-      success: true,
-      data: parsedPayload,
-    };
-  } catch (error) {
-    return {
-      success: false,
-      error: error.message,
-    };
-  }
-}
-
-/**
- * 💾 Firestore에 구매 정보 저장
+ * 💾 JWS 트랜잭션 정보만 Firestore에 저장 (단순화)
  * @param {string} userId - 사용자 ID
- * @param {object} transaction - 트랜잭션 정보
- * @param {object} subscriptionData - 구독 상태 정보
+ * @param {object} transaction - JWS 디코딩된 트랜잭션 정보
  */
-async function savePurchaseInfoToFirestore(userId, transaction, subscriptionData) {
+async function saveJWSTransactionToFirestore(userId, transaction) {
   try {
-    console.log("💾 Firestore에 구매 정보 저장 시작 (통합 구조)");
+    console.log("💾 JWS 트랜잭션 정보 Firestore 저장 시작 (단순화)");
 
     const db = admin.firestore();
     
-    // 🎯 통합 구독 데이터 구조 (간소화)
-    const unifiedSubscriptionData = {
-      // 기본 정보
+    // 🎯 기본 트랜잭션 정보만 저장
+    const basicTransactionData = {
+      // 트랜잭션 ID 정보
       originalTransactionId: transaction.originalTransactionId,
       lastTransactionId: transaction.transactionId,
       
-      // 구독 상태
-      entitlement: subscriptionData.entitlement,
-      subscriptionStatus: subscriptionData.subscriptionStatus,
+      // 제품 정보
+      productId: transaction.productId,
+      offerType: transaction.offerType,
       
-      // 경험 여부: JWS 단일 트랜잭션으로는 정확한 판단 불가 - 제거
-      // hasUsedTrial: JWS 단일 트랜잭션으로는 정확한 판단 불가,
+      // 시간 정보
+      purchaseDate: transaction.purchaseDate ? parseInt(transaction.purchaseDate) : null,
+      expiresDate: transaction.expiresDate ? parseInt(transaction.expiresDate) : null,
       
-      // 구독 정보
-      autoRenewEnabled: subscriptionData.autoRenewEnabled || false,
-      subscriptionType: subscriptionData.subscriptionType,
-      expirationDate: subscriptionData.expirationDate ? 
-        parseInt(subscriptionData.expirationDate) : null,
-      
-      // 메타데이터 (간소화)
+      // 메타데이터
       lastUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
       lastUpdateSource: "syncPurchaseInfo",
-      dataSource: subscriptionData.dataSource || "jws-only",
+      dataSource: "jws-only",
       
       // 🎯 appAccountToken 저장 (있는 경우)
       ...(transaction.appAccountToken && {
@@ -518,28 +174,38 @@ async function savePurchaseInfoToFirestore(userId, transaction, subscriptionData
       }),
     };
 
-    // 🎯 구매 시점 검증
     const updateData = {
-      subscriptionData: unifiedSubscriptionData,
+      // 🎯 기본 트랜잭션 정보 저장
+      lastTransactionInfo: basicTransactionData,
+      
+      // 🎯 기존 subscriptionData 구조도 업데이트 (호환성)
+      subscriptionData: {
+        ...basicTransactionData,
+        // 상태 정보는 checkSubscriptionStatus에서 채움
+      },
+      
       lastSyncAt: admin.firestore.FieldValue.serverTimestamp(),
       lastSyncMethod: "jwsRepresentation",
     };
 
     await db.collection("users").doc(userId).set(updateData, {merge: true});
 
-    console.log("✅ Firestore 저장 완료 (통합 구조):", {
+    console.log("✅ JWS 트랜잭션 정보 저장 완료:", {
       userId: userId,
-      entitlement: subscriptionData.entitlement,
-      subscriptionStatus: subscriptionData.subscriptionStatus,
-      autoRenewEnabled: subscriptionData.autoRenewEnabled,
-      dataSource: subscriptionData.dataSource,
+      transactionId: transaction.transactionId,
+      originalTransactionId: transaction.originalTransactionId,
+      productId: transaction.productId,
+      offerType: transaction.offerType,
     });
   } catch (error) {
-    console.error("❌ Firestore 저장 실패:", error.message);
+    console.error("❌ JWS 트랜잭션 정보 저장 실패:", error.message);
     throw error;
   }
 }
 
+
+
 module.exports = {
   syncPurchaseInfo,
 };
+ 
