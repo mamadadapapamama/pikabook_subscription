@@ -3,6 +3,7 @@ const {onRequest} = require("firebase-functions/v2/https");
 const {defineSecret} = require("firebase-functions/params");
 const admin = require("firebase-admin");
 const {Entitlement, SubscriptionStatus} = require("../shared/constant");
+const {updateUnifiedSubscriptionData} = require("../utils/subscriptionDataManager");
 const {
   appstoreKeyId,
   appstoreIssuerId,
@@ -98,7 +99,7 @@ function decodeJWS(jws) {
 }
 
 /**
- * 알림 처리 (단순화)
+ * 알림 처리 (통합 함수 사용)
  */
 async function processNotification(notificationType, subtype, transaction) {
   const db = admin.firestore();
@@ -126,8 +127,21 @@ async function processNotification(notificationType, subtype, transaction) {
     // 구독 상태 분석
     const subscriptionInfo = analyzeTransactionHistory(historyResult.data);
 
-    // Firestore 업데이트
-    await updateSubscriptionData(db, userId, subscriptionInfo, notificationType, subtype, transaction);
+    // 통합 구독 데이터 업데이트
+    const subscriptionUpdates = {
+      ...subscriptionInfo,
+      lastTransactionId: transaction.transactionId,
+      originalTransactionId: transaction.originalTransactionId,
+      productId: transaction.productId,
+      purchaseDate: transaction.purchaseDate ? parseInt(transaction.purchaseDate) : null,
+      notificationType: notificationType,
+      
+      // 조건부 필드들
+      ...(subtype && { notificationSubtype: subtype }),
+      ...(transaction.offerType && { offerType: transaction.offerType }),
+    };
+
+    await updateUnifiedSubscriptionData(db, userId, subscriptionUpdates, "webhook");
 
     console.log(`✅ 웹훅 처리 완료: ${userId}, entitlement: ${subscriptionInfo.entitlement}, hasUsedTrial: ${subscriptionInfo.hasUsedTrial}`);
 
@@ -138,16 +152,43 @@ async function processNotification(notificationType, subtype, transaction) {
 }
 
 /**
+ * 기본 웹훅 정보 저장 (History 조회 실패 시)
+ */
+async function saveBasicWebhookInfo(db, userId, notificationType, subtype, transaction) {
+  try {
+    const basicSubscriptionUpdates = {
+      originalTransactionId: transaction.originalTransactionId,
+      lastTransactionId: transaction.transactionId,
+      productId: transaction.productId,
+      purchaseDate: transaction.purchaseDate ? parseInt(transaction.purchaseDate) : null,
+      expiresDate: transaction.expiresDate ? parseInt(transaction.expiresDate) : null,
+      notificationType: notificationType,
+      
+      // 조건부 필드들
+      ...(subtype && { notificationSubtype: subtype }),
+      ...(transaction.offerType && { offerType: transaction.offerType }),
+    };
+
+    await updateUnifiedSubscriptionData(db, userId, basicSubscriptionUpdates, "webhook");
+    
+    console.log(`✅ 기본 웹훅 정보 저장: ${userId}`);
+  } catch (error) {
+    console.error("❌ 기본 웹훅 정보 저장 실패:", error);
+    throw error;
+  }
+}
+
+/**
  * 사용자 찾기
  */
 async function findUserByOriginalTransactionId(db, originalTransactionId) {
-  // 새로운 구조 검색
+  // 통합 구조 검색
   let usersQuery = await db.collection("users")
     .where("subscriptionData.originalTransactionId", "==", originalTransactionId)
     .limit(1)
     .get();
 
-  // 기존 구조 검색
+  // 레거시 구조 검색 (호환성)
   if (usersQuery.empty) {
     usersQuery = await db.collection("users")
       .where("subscription.originalTransactionId", "==", originalTransactionId)
@@ -159,7 +200,7 @@ async function findUserByOriginalTransactionId(db, originalTransactionId) {
 }
 
 /**
- * Transaction History 분석 (단순화)
+ * Transaction History 분석 (기존 로직 유지)
  */
 function analyzeTransactionHistory(historyData) {
   const result = {
@@ -253,66 +294,4 @@ function analyzeTransactionHistory(historyData) {
   }
 
   return result;
-}
-
-/**
- * 구독 데이터 업데이트
- */
-async function updateSubscriptionData(db, userId, subscriptionInfo, notificationType, subtype, transaction) {
-  const webhookData = {
-    ...subscriptionInfo,
-    notificationType: notificationType,
-    subtype: subtype || null,
-    originalTransactionId: transaction.originalTransactionId,
-    lastTransactionId: transaction.transactionId,
-    productId: transaction.productId,
-    offerType: transaction.offerType,
-    purchaseDate: transaction.purchaseDate ? parseInt(transaction.purchaseDate) : null,
-    expiresDate: transaction.expiresDate ? parseInt(transaction.expiresDate) : null,
-    lastUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    lastUpdateSource: "appStoreNotifications",
-    dataSource: "webhook-real-time",
-  };
-
-  await db.collection("users").doc(userId).update({
-    subscriptionData: webhookData,
-    lastWebhookNotification: {
-      notificationType: notificationType,
-      subtype: subtype,
-      transactionId: transaction.transactionId,
-      productId: transaction.productId,
-      offerType: transaction.offerType,
-      timestamp: admin.firestore.FieldValue.serverTimestamp(),
-    },
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  });
-}
-
-/**
- * 기본 웹훅 정보만 저장
- */
-async function saveBasicWebhookInfo(db, userId, notificationType, subtype, transaction) {
-  const basicData = {
-    originalTransactionId: transaction.originalTransactionId,
-    lastTransactionId: transaction.transactionId,
-    notificationType: notificationType,
-    subtype: subtype || null,
-    productId: transaction.productId,
-    offerType: transaction.offerType,
-    purchaseDate: transaction.purchaseDate ? parseInt(transaction.purchaseDate) : null,
-    expiresDate: transaction.expiresDate ? parseInt(transaction.expiresDate) : null,
-    lastUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    lastUpdateSource: "appStoreNotifications",
-    dataSource: "webhook-basic",
-  };
-
-  await db.collection("users").doc(userId).update({
-    lastWebhookNotification: basicData,
-    "subscriptionData.lastTransactionId": transaction.transactionId,
-    "subscriptionData.lastUpdatedAt": admin.firestore.FieldValue.serverTimestamp(),
-    "subscriptionData.lastUpdateSource": "appStoreNotifications",
-    updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-  });
-
-  console.log(`✅ 기본 웹훅 정보 저장: ${userId}`);
 }

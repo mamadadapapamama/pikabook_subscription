@@ -5,6 +5,7 @@ const admin = require("firebase-admin");
 const {Entitlement, SubscriptionStatus} = require("../shared/constant");
 const {checkInternalTestAccount} = require("../utils/testAccounts");
 const {appStoreServerClient} = require("../utils/appStoreServerClient");
+const {getUnifiedSubscriptionData, updateUnifiedSubscriptionData} = require("../utils/subscriptionDataManager");
 const {
   appstoreKeyId,
   appstoreIssuerId,
@@ -57,7 +58,7 @@ const subCheckSubscriptionStatus = onCall({
     const forceRefresh = request.data?.forceRefresh || false;
     const now = Date.now();
 
-    // 🎯 중복 호출 감지 (1초 내 호출 제한)
+    // 🎯 중복 호출 감지 (5분 내 호출 제한)
     const lastCallTime = userCallTimestamps.get(userId);
     if (!forceRefresh && lastCallTime && (now - lastCallTime) < DUPLICATE_CALL_PREVENTION_MS) {
       console.log(`⚠️ 중복 호출 감지: ${userId}, 간격: ${now - lastCallTime}ms`);
@@ -67,11 +68,11 @@ const subCheckSubscriptionStatus = onCall({
       if (cachedData) {
         return {
           success: true,
-          subscription: cachedData.subscription,
+          subscription: cachedData,
           dataSource: "duplicate-call-prevention",
           callInterval: now - lastCallTime,
           warning: "중복 호출 방지로 캐시 응답",
-          version: "settings-optimized-v1",
+          version: "settings-optimized-v2",
         };
       }
     }
@@ -95,7 +96,7 @@ const subCheckSubscriptionStatus = onCall({
         success: true,
         subscription: testAccountResult,
         dataSource: "test-account",
-        version: "settings-optimized-v1",
+        version: "settings-optimized-v2",
       };
     }
 
@@ -108,16 +109,16 @@ const subCheckSubscriptionStatus = onCall({
 
       if (cachedData && !isCacheExpired(cachedData)) {
         console.log("⚡ 캐시된 구독 상태 반환:", {
-          entitlement: cachedData.subscription.entitlement,
+          entitlement: cachedData.entitlement,
           cacheAge: getCacheAge(cachedData) + "ms",
         });
 
         return {
           success: true,
-          subscription: cachedData.subscription,
+          subscription: cachedData,
           dataSource: "cache",
           cacheAge: getCacheAge(cachedData),
-          version: "settings-optimized-v1",
+          version: "settings-optimized-v2",
         };
       }
 
@@ -125,12 +126,12 @@ const subCheckSubscriptionStatus = onCall({
     }
 
     // 🎯 Step 3: App Store Server API 호출 (캐시 만료 또는 강제 새로고침)
-
     const freshData = await fetchFreshSubscriptionStatus(userId);
 
     if (freshData) {
       // 🎯 Step 4: 새로운 데이터 캐시에 저장
-      await saveCachedSubscriptionStatus(userId, freshData);
+      const db = admin.firestore();
+      await updateUnifiedSubscriptionData(db, userId, freshData, "checkSubscriptionStatus");
 
       console.log("✅ 최신 구독 상태 조회 완료:", {
         entitlement: freshData.entitlement,
@@ -143,7 +144,7 @@ const subCheckSubscriptionStatus = onCall({
         dataSource: forceRefresh ? "force-refresh" : "fresh-api",
         cacheAge: 0,
         forceRefresh: forceRefresh,
-        version: "settings-optimized-v1",
+        version: "settings-optimized-v2",
       };
     }
 
@@ -165,7 +166,7 @@ const subCheckSubscriptionStatus = onCall({
       dataSource: "default",
       cacheAge: 0,
       forceRefresh: forceRefresh,
-      version: "settings-optimized-v1",
+      version: "settings-optimized-v2",
     };
   } catch (error) {
     console.error("❌ [Error] 설정 화면 구독 상태 조회 실패:", error);
@@ -173,7 +174,7 @@ const subCheckSubscriptionStatus = onCall({
       success: false,
       error: error.message,
       dataSource: "error",
-      version: "settings-optimized-v1",
+      version: "settings-optimized-v2",
     };
   }
 });
@@ -185,28 +186,18 @@ const subCheckSubscriptionStatus = onCall({
  */
 async function getCachedSubscriptionStatus(userId) {
   try {
-          const db = admin.firestore();
-          const userDoc = await db.collection("users").doc(userId).get();
-
-    if (!userDoc.exists) {
-      return null;
-    }
-
-            const userData = userDoc.data();
-    const subscriptionData = userData.subscriptionData;
+    const db = admin.firestore();
+    const subscriptionData = await getUnifiedSubscriptionData(db, userId);
     
     if (subscriptionData && subscriptionData.lastUpdatedAt) {
       console.log("📦 통합 구독 데이터 발견:", {
         cacheAge: Date.now() - subscriptionData.lastUpdatedAt.toMillis() + "ms",
         entitlement: subscriptionData.entitlement,
-        dataSource: subscriptionData.dataSource,
+        lastUpdateSource: subscriptionData.lastUpdateSource,
+        dataVersion: subscriptionData.dataVersion,
       });
 
-      return {
-        subscription: subscriptionData,
-        lastCacheAt: subscriptionData.lastUpdatedAt,
-        cacheSource: subscriptionData.lastUpdateSource || "unknown",
-      };
+      return subscriptionData;
     }
 
     return null;
@@ -222,11 +213,11 @@ async function getCachedSubscriptionStatus(userId) {
  * @return {boolean} 만료 여부
  */
 function isCacheExpired(cachedData) {
-  if (!cachedData.lastCacheAt) {
+  if (!cachedData.lastUpdatedAt) {
     return true;
   }
 
-  const cacheAge = Date.now() - cachedData.lastCacheAt.toMillis();
+  const cacheAge = Date.now() - cachedData.lastUpdatedAt.toMillis();
   const isExpired = cacheAge > CACHE_DURATION_MS;
 
   console.log("⏰ 캐시 만료 확인:", {
@@ -244,51 +235,41 @@ function isCacheExpired(cachedData) {
  * @return {number} 캐시 나이 (ms)
  */
 function getCacheAge(cachedData) {
-  if (!cachedData.lastCacheAt) {
+  if (!cachedData.lastUpdatedAt) {
     return 0;
-          }
+  }
 
-  return Date.now() - cachedData.lastCacheAt.toMillis();
-        }
+  return Date.now() - cachedData.lastUpdatedAt.toMillis();
+}
 
 /**
- * 🔍 App Store Server API로 최신 구독 상태 조회 (단순화)
+ * 🔍 App Store Server API로 최신 구독 상태 조회 (통합 구조 사용)
  * @param {string} userId - 사용자 ID
  * @return {Promise<object|null>} 최신 구독 상태
  */
 async function fetchFreshSubscriptionStatus(userId) {
   try {
-    // 🎯 Firestore에서 originalTransactionId 조회
+    // 🎯 통합 구독 데이터에서 originalTransactionId 조회
     const db = admin.firestore();
-    const userDoc = await db.collection("users").doc(userId).get();
+    const subscriptionData = await getUnifiedSubscriptionData(db, userId);
 
-    if (!userDoc.exists) {
-      console.log("⚠️ 사용자 문서 없음 - 신규 사용자");
+    if (!subscriptionData) {
+      console.log("⚠️ 구독 데이터 없음 - 신규 사용자");
       return null;
     }
 
-    const userData = userDoc.data();
-    
-    // 🎯 새로운 구조 우선 검색
-    const originalTransactionId = userData.subscriptionData?.originalTransactionId ||
-      userData.originalTransactionId ||
-      userData.subscription?.originalTransactionId;
-
-    // 🎯 최신 트랜잭션 ID 추출 (API 호출용)
-    const lastTransactionId = userData.subscriptionData?.lastTransactionId || 
-      userData.lastTransactionId ||
-      originalTransactionId;
+    const originalTransactionId = subscriptionData.originalTransactionId;
+    const lastTransactionId = subscriptionData.lastTransactionId || originalTransactionId;
 
     if (!lastTransactionId) {
       console.log("⚠️ transactionId 없음 - 구매 이력 없음");
       return null;
     }
 
-    console.log("🚀 App Store Server API 호출 (단순화):", {
+    console.log("🚀 App Store Server API 호출 (통합 구조):", {
       lastTransactionId: kDebugMode ? lastTransactionId : "***",
       originalTransactionId: kDebugMode ? originalTransactionId : "***",
-      dataSource: userData.subscriptionData?.lastTransactionId ? "subscriptionData" : 
-                 userData.lastTransactionId ? "root" : "original"
+      dataVersion: subscriptionData.dataVersion,
     });
 
     // 🎯 단순한 Transaction Info 조회 (History 분석 없음)
@@ -338,7 +319,6 @@ async function createBasicSubscriptionInfo(transactionInfo) {
       hasFamilySharedSubscription: false,
       environment: null,
       subscriptionStartDate: null,
-      userAccountToken: null,
     };
 
     const decodedTransaction = decodeJWS(transactionInfo.signedTransactionInfo);
@@ -355,7 +335,20 @@ async function createBasicSubscriptionInfo(transactionInfo) {
     const isRevoked = !!transactionData.revocationDate;
     const isCurrentTransactionTrial = transactionData.offerType === 1;
 
+    // 기본 트랜잭션 정보 추가
+    result.originalTransactionId = transactionData.originalTransactionId;
+    result.lastTransactionId = transactionData.transactionId;
+    result.productId = transactionData.productId;
     result.expirationDate = expiresDate.toString();
+    result.purchaseDate = transactionData.purchaseDate ? parseInt(transactionData.purchaseDate) : null;
+
+    // 조건부 필드들
+    if (transactionData.offerType) {
+      result.offerType = transactionData.offerType;
+    }
+    if (transactionData.appAccountToken) {
+      result.appAccountToken = transactionData.appAccountToken;
+    }
 
     console.log("🎯 기본 트랜잭션 정보 분석:", {
       transactionId: kDebugMode ? transactionData.transactionId : "***",
@@ -429,68 +422,11 @@ async function createBasicSubscriptionInfo(transactionInfo) {
       hasFamilySharedSubscription: false,
       environment: null,
       subscriptionStartDate: null,
-      userAccountToken: null,
       
       error: error.message,
     };
   }
 }
-
-/**
- * 💾 구독 상태 캐시에 저장 (통합 구조)
- * @param {string} userId - 사용자 ID
- * @param {object} subscriptionData - 구독 상태 데이터
- */
-async function saveCachedSubscriptionStatus(userId, subscriptionData) {
-  try {
-    console.log("💾 구독 상태 캐시에 저장 시작 (통합 구조)");
-
-    const db = admin.firestore();
-    
-    // 🎯 민감한 정보 제외 (Firestore 저장용)
-    const {userAccountToken, ...safeSubscriptionData} = subscriptionData;
-    
-    // 🎯 통합 구독 데이터 구조 (간소화)
-    const unifiedSubscriptionData = {
-      ...safeSubscriptionData,
-      
-      // 메타데이터 (간소화)
-      lastUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-      lastUpdateSource: "checkSubscriptionStatus",
-      dataSource: "fresh-api",
-      
-      // 포맷 변환
-      expirationDate: safeSubscriptionData.expirationDate ?
-        parseInt(safeSubscriptionData.expirationDate) : null,
-    };
-
-    const updateData = {
-      // 🎯 통합 구독 데이터 (단일 구조)
-      subscriptionData: unifiedSubscriptionData,
-    };
-
-    await db.collection("users").doc(userId).set(updateData, {merge: true});
-
-    console.log("✅ 구독 상태 캐시 저장 완료 (통합 구조):", {
-      entitlement: safeSubscriptionData.entitlement,
-      subscriptionStatus: safeSubscriptionData.subscriptionStatus,
-      hasUsedTrial: safeSubscriptionData.hasUsedTrial,
-      autoRenewEnabled: safeSubscriptionData.autoRenewEnabled,
-      userAccountToken: userAccountToken ? "*** (저장되지 않음)" : null,
-    });
-  } catch (error) {
-    console.error("❌ 캐시 저장 실패:", error.message);
-    // 캐시 저장 실패해도 메인 기능에는 영향 없음
-  }
-}
-
-
-
-
-
-// 🎯 analyzeTransactionHistory 함수 제거됨 - 웹훅으로 이동됨
-
-// 🎯 getOfferTypeDescription 함수 제거됨 - 웹훅으로 이동됨
 
 /**
  * JWS(JSON Web Signature) 디코딩 (검증 없이)
@@ -513,10 +449,6 @@ function decodeJWS(jws) {
     return null;
   }
 }
-
-
-
-
 
 module.exports = {
   subCheckSubscriptionStatus,

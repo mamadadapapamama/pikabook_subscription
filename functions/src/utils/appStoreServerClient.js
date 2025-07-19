@@ -42,7 +42,7 @@ class AppStoreConnectClient {
       const issuerId = appstoreConnectIssuerId.value();
       const privateKey = appstoreConnectPrivateKey.value();
       const bundleId = appstoreConnectBundleId.value();
-      const environment = appstoreConnectEnvironment.value();
+      const environment = appstoreConnectEnvironment.value() || 'sandbox';
 
       console.log("🔧 App Store Connect API Client 초기화:");
       console.log("  - Key ID:", keyId ? "✅" : "❌");
@@ -209,7 +209,7 @@ class InAppPurchaseClient {
       const issuerId = iapIssuerId.value();
       const privateKey = iapPrivateKey.value();
       const bundleId = iapBundleId.value();
-      const environment = iapEnvironment.value();
+      const environment = iapEnvironment.value() || 'sandbox';
 
       console.log("🔧 In-App Purchase API Client 초기화:");
       console.log("  - Key ID:", keyId ? "✅" : "❌");
