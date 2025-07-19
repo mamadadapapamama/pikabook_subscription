@@ -1,6 +1,5 @@
 // Firebase Functions v2 - App Store Server Notifications 웹훅
 const {onRequest} = require("firebase-functions/v2/https");
-const {defineSecret} = require("firebase-functions/params");
 const admin = require("firebase-admin");
 const {Entitlement, SubscriptionStatus} = require("../shared/constant");
 const {updateUnifiedSubscriptionData} = require("../utils/subscriptionDataManager");
@@ -11,10 +10,11 @@ const {
   appstoreBundleId,
   appstoreEnvironment,
   appStoreServerClient,
+  decodeJWS,
 } = require("../utils/appStoreServerClient");
 
 // 🎯 디버그 모드 설정
-const kDebugMode = process.env.NODE_ENV === 'development' || process.env.DEBUG === 'true';
+const kDebugMode = process.env.NODE_ENV === "development" || process.env.DEBUG === "true";
 
 /**
  * 💡 최신 트랜잭션 정보만으로 상태 업데이트가 충분한 알림 유형들
@@ -125,7 +125,7 @@ async function processNotification(notificationType, subtype, transaction) {
       //  phức tạp한 알림은 History 조회
       console.log("📚 복잡한 알림: getTransactionHistory() 호출");
       const historyResult = await appStoreServerClient.getTransactionHistory(transaction.transactionId);
-      
+
       if (!historyResult.success) {
         console.error("❌ History 조회 실패:", historyResult.error);
         await saveBasicWebhookInfo(db, userId, notificationType, subtype, transaction);
@@ -142,16 +142,15 @@ async function processNotification(notificationType, subtype, transaction) {
       productId: transaction.productId,
       purchaseDate: transaction.purchaseDate ? parseInt(transaction.purchaseDate) : null,
       notificationType: notificationType,
-      
+
       // 조건부 필드들
-      ...(subtype && { notificationSubtype: subtype }),
-      ...(transaction.offerType && { offerType: transaction.offerType }),
+      ...(subtype && {notificationSubtype: subtype}),
+      ...(transaction.offerType && {offerType: transaction.offerType}),
     };
 
     await updateUnifiedSubscriptionData(db, userId, subscriptionUpdates, "webhook");
 
     console.log(`✅ 웹훅 처리 완료: ${userId}, entitlement: ${subscriptionInfo.entitlement}, hasUsedTrial: ${subscriptionInfo.hasUsedTrial}`);
-
   } catch (error) {
     console.error("💥 알림 처리 실패:", error);
     await saveBasicWebhookInfo(db, userId, notificationType, subtype, transaction);
@@ -170,14 +169,14 @@ async function saveBasicWebhookInfo(db, userId, notificationType, subtype, trans
       purchaseDate: transaction.purchaseDate ? parseInt(transaction.purchaseDate) : null,
       expiresDate: transaction.expiresDate ? parseInt(transaction.expiresDate) : null,
       notificationType: notificationType,
-      
+
       // 조건부 필드들
-      ...(subtype && { notificationSubtype: subtype }),
-      ...(transaction.offerType && { offerType: transaction.offerType }),
+      ...(subtype && {notificationSubtype: subtype}),
+      ...(transaction.offerType && {offerType: transaction.offerType}),
     };
 
     await updateUnifiedSubscriptionData(db, userId, basicSubscriptionUpdates, "webhook");
-    
+
     console.log(`✅ 기본 웹훅 정보 저장: ${userId}`);
   } catch (error) {
     console.error("❌ 기본 웹훅 정보 저장 실패:", error);
@@ -238,7 +237,7 @@ function createSubscriptionInfoFromTransaction(transaction) {
     result.subscriptionStatus = SubscriptionStatus.ACTIVE;
     result.autoRenewEnabled = true; // 만료되지 않았으므로 자동 갱신 중으로 간주
   }
-  
+
   // 구독 타입 결정
   if (transaction.productId?.includes("yearly")) {
     result.subscriptionType = "yearly";

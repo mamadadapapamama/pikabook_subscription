@@ -4,28 +4,13 @@ const {onCall, HttpsError} = require("firebase-functions/v2/https");
 const admin = require("firebase-admin");
 const {Entitlement, SubscriptionStatus} = require("../shared/constant");
 const {checkInternalTestAccount} = require("../utils/testAccounts");
-const {appStoreServerClient} = require("../utils/appStoreServerClient");
-const {getUnifiedSubscriptionData, updateUnifiedSubscriptionData} = require("../utils/subscriptionDataManager");
-const {
-  appstoreKeyId,
-  appstoreIssuerId,
-  appstorePrivateKey,
-  appstoreBundleId,
-  appstoreEnvironment,
-} = require("../utils/appStoreServerClient");
-const {inAppPurchaseClient} = require("../utils/inAppPurchaseClient");
+const {getUnifiedSubscriptionData} = require("../utils/subscriptionDataManager");
 
 // 🎯 캐시 유효 시간 (10분)
 const CACHE_DURATION_MS = 10 * 60 * 1000;
 
-// 🎯 중복 호출 방지 시간 (5분) - 구독 상태는 자주 변경되지 않음
-const DUPLICATE_CALL_PREVENTION_MS = 5 * 60 * 1000;
-
 // 🎯 디버그 모드 설정 (환경 변수 기반)
-const kDebugMode = process.env.NODE_ENV === 'development' || process.env.DEBUG === 'true';
-
-// 🎯 중복 호출 방지용 맵
-const userCallTimestamps = new Map();
+const kDebugMode = process.env.NODE_ENV === "development" || process.env.DEBUG === "true";
 
 /**
  * 🎯 설정 화면 전용: App Store Server API + 캐시 조합
@@ -39,13 +24,6 @@ const userCallTimestamps = new Map();
  */
 const subCheckSubscriptionStatus = onCall({
   region: "asia-southeast1",
-  secrets: [
-    appstoreKeyId,
-    appstoreIssuerId,
-    appstorePrivateKey,
-    appstoreBundleId,
-    appstoreEnvironment,
-  ],
 }, async (request) => {
   try {
     console.log("🎯 [Settings] Firestore 기반 구독 상태 조회 시작");
@@ -95,7 +73,7 @@ const subCheckSubscriptionStatus = onCall({
         version: "firestore-only-v3",
       };
     }
-    
+
     // 🎯 Step 3: 구독 정보가 없는 경우 (신규 사용자 등)
     const unverifiedData = {
       entitlement: Entitlement.FREE,
@@ -131,7 +109,7 @@ async function getCachedSubscriptionStatus(userId) {
   try {
     const db = admin.firestore();
     const subscriptionData = await getUnifiedSubscriptionData(db, userId);
-    
+
     if (subscriptionData && subscriptionData.lastUpdatedAt) {
       console.log("📦 통합 구독 데이터 발견:", {
         cacheAge: Date.now() - subscriptionData.lastUpdatedAt.toMillis() + "ms",
@@ -174,18 +152,7 @@ function isCacheExpired(cachedData) {
   return isExpired;
 }
 
-/**
- * 📏 캐시 나이 계산
- * @param {object} cachedData - 캐시된 데이터
- * @return {number} 캐시 나이 (ms)
- */
-function getCacheAge(cachedData) {
-  if (!cachedData.lastUpdatedAt) {
-    return 0;
-  }
 
-  return Date.now() - cachedData.lastUpdatedAt.toMillis();
-}
 
 module.exports = {
   subCheckSubscriptionStatus,

@@ -58,7 +58,7 @@ function checkInternalTestAccount(email) {
       productId: "com.pikabook.premium.yearly",
       // 🎯 배너 전용 메타데이터
       bannerMetadata: {
-        bannerType: "premiumStarted",	
+        bannerType: "premiumStarted",
         bannerDismissedAt: null,
       },
     },
@@ -75,7 +75,7 @@ function checkInternalTestAccount(email) {
       productId: "com.pikabook.premium.monthly",
       // 🎯 배너 전용 메타데이터
       bannerMetadata: {
-        bannerType: "trialStarted",	
+        bannerType: "trialStarted",
         bannerDismissedAt: null,
       },
     },
@@ -91,7 +91,7 @@ function checkInternalTestAccount(email) {
       productId: "com.pikabook.premium.monthly",
       // 🎯 배너 전용 메타데이터
       bannerMetadata: {
-        bannerType: "trialCancelled",	
+        bannerType: "trialCancelled",
         bannerDismissedAt: null,
       },
     },
@@ -107,7 +107,7 @@ function checkInternalTestAccount(email) {
       productId: "com.pikabook.premium.monthly",
       // 🎯 배너 전용 메타데이터
       bannerMetadata: {
-        bannerType: "trialCompleted",	
+        bannerType: "trialCompleted",
         bannerDismissedAt: null,
       },
     },
@@ -124,7 +124,7 @@ function checkInternalTestAccount(email) {
       productId: "com.pikabook.premium.monthly",
       // 🎯 배너 전용 메타데이터
       bannerMetadata: {
-        bannerType: "premiumCancelled",	
+        bannerType: "premiumCancelled",
         bannerDismissedAt: null,
       },
     },
@@ -143,7 +143,7 @@ function checkInternalTestAccount(email) {
         bannerType: "premiumExpired",
         bannerDismissedAt: null,
       },
-          },
+    },
 
     "premium-grace@pikabook.com": {
       entitlement: Entitlement.PREMIUM,
@@ -159,7 +159,7 @@ function checkInternalTestAccount(email) {
       bannerMetadata: {
         bannerType: "premiumGrace",
         bannerDismissedAt: null,
-          },
+      },
     },
 
     // 🟠 특수 테스트 계정들
@@ -173,7 +173,7 @@ function checkInternalTestAccount(email) {
       originalTransactionId: "test_refunded_transaction_001",
       productId: null,
     },
-      
+
   };
 
   const accountInfo = INTERNAL_TEST_ACCOUNTS[email];

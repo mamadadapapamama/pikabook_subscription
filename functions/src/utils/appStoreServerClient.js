@@ -21,7 +21,7 @@ const iapEnvironment = defineSecret("IAP_ENVIRONMENT"); // 동일
 
 /**
  * 🚀 App Store Connect API Client (구독 상태 조회, 트랜잭션 히스토리)
- * 
+ *
  * 사용처:
  * - checkSubscriptionStatus.js
  * - appStoreNotifications.js
@@ -42,7 +42,7 @@ class AppStoreConnectClient {
       const issuerId = appstoreConnectIssuerId.value();
       const privateKey = appstoreConnectPrivateKey.value();
       const bundleId = appstoreConnectBundleId.value();
-      const environment = appstoreConnectEnvironment.value() || 'sandbox';
+      const environment = appstoreConnectEnvironment.value() || "sandbox";
 
       console.log("🔧 App Store Connect API Client 초기화:");
       console.log("  - Key ID:", keyId ? "✅" : "❌");
@@ -55,7 +55,7 @@ class AppStoreConnectClient {
         throw new Error("App Store Connect API 환경 변수가 설정되지 않았습니다");
       }
 
-      const appStoreEnvironment = environment === "production" ? 
+      const appStoreEnvironment = environment === "production" ?
         Environment.PRODUCTION : Environment.SANDBOX;
 
       console.log(`🌍 App Store Connect 환경: ${environment} (${appStoreEnvironment})`);
@@ -82,7 +82,7 @@ class AppStoreConnectClient {
     try {
       console.log("🔍 [Connect] 구독 상태 조회 시작:", originalTransactionId);
       const client = this.initialize();
-      
+
       const response = await client.getAllSubscriptionStatuses(originalTransactionId);
 
       if (response && response.data) {
@@ -138,7 +138,7 @@ class AppStoreConnectClient {
       console.error("  - Error Code:", error.code || "No code");
       console.error("  - Error Stack:", error.stack || "No stack");
       console.error("  - Full Error:", JSON.stringify(error, null, 2));
-      
+
       // Apple API 에러 구조 확인
       if (error.httpStatusCode) {
         console.error("  - HTTP Status Code:", error.httpStatusCode);
@@ -149,7 +149,7 @@ class AppStoreConnectClient {
       if (error.errorMessage) {
         console.error("  - Error Message:", error.errorMessage);
       }
-      
+
       return {
         success: false,
         error: error.message || error.toString() || "Unknown error",
@@ -190,17 +190,17 @@ class AppStoreConnectClient {
     try {
       const client = this.initialize();
       const verificationResult = await client.verifyAndDecodeNotification(jws);
-      return { success: true, data: verificationResult };
+      return {success: true, data: verificationResult};
     } catch (error) {
       console.error("❌ [Connect] JWS 검증 실패:", error.message);
-      return { success: false, error: error.message };
+      return {success: false, error: error.message};
     }
   }
 }
 
 /**
  * 🚀 In-App Purchase API Client (JWS 검증, 프로모션 오퍼)
- * 
+ *
  * 사용처:
  * - syncPurchaseInfo.js
  */
@@ -220,7 +220,7 @@ class InAppPurchaseClient {
       const issuerId = iapIssuerId.value();
       const privateKey = iapPrivateKey.value();
       const bundleId = iapBundleId.value();
-      const environment = iapEnvironment.value() || 'sandbox';
+      const environment = iapEnvironment.value() || "sandbox";
 
       console.log("🔧 In-App Purchase API Client 초기화:");
       console.log("  - Key ID:", keyId ? "✅" : "❌");
@@ -233,7 +233,7 @@ class InAppPurchaseClient {
         throw new Error("In-App Purchase API 환경 변수가 설정되지 않았습니다");
       }
 
-      const appStoreEnvironment = environment === "production" ? 
+      const appStoreEnvironment = environment === "production" ?
         Environment.PRODUCTION : Environment.SANDBOX;
 
       console.log(`🌍 In-App Purchase 환경: ${environment} (${appStoreEnvironment})`);
@@ -258,14 +258,15 @@ class InAppPurchaseClient {
 
   async verifyJWS(jwsRepresentation) {
     try {
-      console.log("🔐 [IAP] JWS 검증 시작");
+      console.log("🔐 [IAP] JWS 트랜잭션 검증 및 디코딩 시작");
       const client = this.initialize();
-      const verificationResult = await client.verifyAndDecodeTransaction(jwsRepresentation);
+      // 🔥 수정: 올바른 함수 이름인 decodeTransaction() 사용
+      const decodedTransaction = await client.decodeTransaction(jwsRepresentation);
 
-      console.log("✅ [IAP] JWS 검증 성공");
+      console.log("✅ [IAP] JWS 트랜잭션 검증 및 디코딩 성공");
       return {
         success: true,
-        data: verificationResult,
+        data: decodedTransaction,
       };
     } catch (error) {
       console.error("❌ [IAP] JWS 검증 실패:", error.message);
@@ -279,9 +280,9 @@ class InAppPurchaseClient {
   async verifyAndDecodeJWS(jws) {
     try {
       const client = this.initialize();
-      // 트랜잭션과 알림 JWS를 모두 처리할 수 있는 일반적인 검증 로직
+      // 🔥 수정: 올바른 함수 이름인 decodeTransaction() 사용
       const verificationResult = await client.verifyAndDecodeNotification(jws)
-        .catch(() => client.verifyAndDecodeTransaction(jws));
+        .catch(() => client.decodeTransaction(jws));
       
       return { success: true, data: verificationResult };
     } catch (error) {
@@ -300,7 +301,7 @@ function decodeJWS(jwsRepresentation) {
   try {
     const parts = jwsRepresentation.split(".");
     if (parts.length !== 3) return null;
-    
+
     const payload = parts[1];
     const decoded = Buffer.from(payload, "base64url").toString("utf8");
     return JSON.parse(decoded);
@@ -312,11 +313,8 @@ function decodeJWS(jwsRepresentation) {
 
 module.exports = {
   // 🎯 새로운 분리된 클라이언트들
-  appStoreConnectClient,
-  inAppPurchaseClient,
-  
-  // 🎯 기존 호환성 유지
   appStoreServerClient,
+  inAppPurchaseClient,
   
   // 🎯 App Store Connect API Secrets
   appstoreConnectKeyId,

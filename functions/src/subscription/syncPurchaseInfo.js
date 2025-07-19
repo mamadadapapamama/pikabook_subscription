@@ -2,10 +2,10 @@
 // 🚀 Apple Best Practice: jwsRepresentation 기반 구매 정보 동기화
 const {onCall, HttpsError} = require("firebase-functions/v2/https");
 const admin = require("firebase-admin");
-const {Entitlement, SubscriptionStatus} = require("../shared/constant");
+const {SubscriptionStatus} = require("../shared/constant");
 const {checkInternalTestAccount} = require("../utils/testAccounts");
 const {inAppPurchaseClient} = require("../utils/appStoreServerClient");
-const {updateUnifiedSubscriptionData, getUnifiedSubscriptionData} = require("../utils/subscriptionDataManager");
+const {updateUnifiedSubscriptionData} = require("../utils/subscriptionDataManager");
 const {
   iapKeyId,
   iapIssuerId,
@@ -128,7 +128,7 @@ const syncPurchaseInfo = onCall({
       subscriptionStatus = "EXPIRED";
       entitlement = "FREE";
     }
-    
+
     // 이 트랜잭션이 무료 체험이었는지 확인.
     // isUpgraded가 true이면 이미 구독 경험이 있으므로 신규 체험이 아님.
     const isTrialTransaction = offerType === 1 && !isUpgraded;
@@ -148,11 +148,14 @@ const syncPurchaseInfo = onCall({
       subscriptionStatus: SubscriptionStatus[subscriptionStatus], // "ACTIVE" -> 1
       subscriptionType,
       // isTrialTransaction이 true일 때만 hasUsedTrial을 true로 설정 (덮어쓰지 않음)
-      ...(isTrialTransaction && { hasUsedTrial: true }),
-      ...(offerType && { offerType }),
-      ...(appAccountToken && { appAccountToken }),
-      ...(revocationDate && { revocationDate: parseInt(revocationDate) }),
+      ...(isTrialTransaction && {hasUsedTrial: true}),
+      ...(offerType && {offerType}),
+      ...(appAccountToken && {appAccountToken}),
+      ...(revocationDate && {revocationDate: parseInt(revocationDate)}),
     };
+
+    // Firestore 업데이트
+    await updateUnifiedSubscriptionData(db, userId, subscriptionUpdates, "syncPurchaseInfo");
 
     // 🔥 Step 5: 클라이언트에 반환할 최종 응답 단순화
     const finalResponse = {
@@ -182,4 +185,3 @@ const syncPurchaseInfo = onCall({
 module.exports = {
   syncPurchaseInfo,
 };
- 
