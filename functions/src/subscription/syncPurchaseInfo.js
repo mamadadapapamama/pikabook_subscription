@@ -5,7 +5,7 @@ const admin = require("firebase-admin");
 const {Entitlement, SubscriptionStatus} = require("../shared/constant");
 const {checkInternalTestAccount} = require("../utils/testAccounts");
 const {inAppPurchaseClient} = require("../utils/appStoreServerClient");
-const {updateUnifiedSubscriptionData} = require("../utils/subscriptionDataManager");
+const {updateUnifiedSubscriptionData, getUnifiedSubscriptionData} = require("../utils/subscriptionDataManager");
 const {
   iapKeyId,
   iapIssuerId,
@@ -67,7 +67,7 @@ const syncPurchaseInfo = onCall({
         success: true,
         subscription: testAccountResult,
         dataSource: "test-account",
-        version: "jwsRepresentation-v2",
+        version: "jwsRepresentation-v3",
       };
     }
 
@@ -145,7 +145,7 @@ const syncPurchaseInfo = onCall({
       purchaseDate: purchaseDate ? parseInt(purchaseDate) : null,
       expiresDate: expiresDateMs,
       entitlement,
-      subscriptionStatus,
+      subscriptionStatus: SubscriptionStatus[subscriptionStatus], // "ACTIVE" -> 1
       subscriptionType,
       // isTrialTransaction이 true일 때만 hasUsedTrial을 true로 설정 (덮어쓰지 않음)
       ...(isTrialTransaction && { hasUsedTrial: true }),
@@ -154,37 +154,20 @@ const syncPurchaseInfo = onCall({
       ...(revocationDate && { revocationDate: parseInt(revocationDate) }),
     };
 
-    // 🎯 Step 4: 통합 구독 데이터 업데이트
-    await updateUnifiedSubscriptionData(db, userId, subscriptionUpdates, "syncPurchaseInfo");
-
-    console.log("✅ [Apple Best Practice] Firestore 구매 정보 동기화 완료.");
-
-    // 🎯 Step 5: 클라이언트에 가장 정확한 상태를 반환하기 위해 Firestore에서 데이터 다시 읽기
-    const userSubRef = db.collection("users").doc(userId).collection("subscriptions").doc("unified");
-    const userSubDoc = await userSubRef.get();
-
-    if (!userSubDoc.exists) {
-      console.error("🔥 데이터 업데이트 후 문서를 찾을 수 없습니다:", userId);
-      throw new HttpsError("internal", "Failed to retrieve subscription status after update.");
-    }
-    
-    const finalSubData = userSubDoc.data();
-    
-    // 🎯 Step 6: 클라이언트에 반환할 최종 응답 구성
-    const clientResponse = {
+    // 🔥 Step 5: 클라이언트에 반환할 최종 응답 단순화
+    const finalResponse = {
       success: true,
-      entitlement: finalSubData.entitlement,
-      subscriptionType: finalSubData.subscriptionType,
-      expiresDate: finalSubData.expiresDate ? new Date(finalSubData.expiresDate).toISOString() : null,
-      hasUsedTrial: finalSubData.hasUsedTrial || false,
-      subscriptionStatus: finalSubData.subscriptionStatus,
+      entitlement,
+      subscriptionStatus: SubscriptionStatus[subscriptionStatus], // "ACTIVE" -> 1
+      expiresDate: expiresDateMs,
+      productId,
+      dataSource: "jws-simplified", // 데이터 출처 명시
       timestamp: new Date().toISOString(),
     };
 
-    console.log("📬 클라이언트에 최종 구독 상태 응답:", clientResponse);
+    console.log("✅ [Apple Best Practice] 최종 응답 준비 완료:", finalResponse);
 
-    return clientResponse;
-
+    return finalResponse;
   } catch (error) {
     console.error("❌ [Error] 구매 정보 동기화 실패:", error);
 

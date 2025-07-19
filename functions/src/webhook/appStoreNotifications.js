@@ -17,6 +17,17 @@ const {
 const kDebugMode = process.env.NODE_ENV === 'development' || process.env.DEBUG === 'true';
 
 /**
+ * 💡 최신 트랜잭션 정보만으로 상태 업데이트가 충분한 알림 유형들
+ * 이 경우 getTransactionHistory() API 호출을 생략하여 비용과 시간을 절약합니다.
+ */
+const SIMPLE_UPDATE_NOTIFICATIONS = [
+  "SUBSCRIBED",
+  "DID_RENEW",
+  "DID_CHANGE_RENEWAL_STATUS",
+  "PRICE_INCREASE",
+];
+
+/**
  * 🔥 App Store Server Notifications 웹훅 엔드포인트
  */
 exports.appStoreNotifications = onRequest({
@@ -43,11 +54,14 @@ exports.appStoreNotifications = onRequest({
       return res.status(400).send("Missing signedPayload");
     }
 
-    // JWS 디코딩
-    const decodedPayload = decodeJWS(notificationPayload.signedPayload);
-    if (!decodedPayload) {
-      return res.status(400).send("Invalid JWS");
+    // JWS 검증 및 디코딩 (보안 강화)
+    const verificationResult = await appStoreServerClient.verifyAndDecodeJWS(notificationPayload.signedPayload);
+
+    if (!verificationResult.success) {
+      console.error("❌ 웹훅 JWS 검증 실패:", verificationResult.error);
+      return res.status(401).send("Invalid JWS signature");
     }
+    const decodedPayload = verificationResult.data;
 
     const notificationType = decodedPayload.notificationType;
     const subtype = decodedPayload.subtype;
@@ -57,10 +71,13 @@ exports.appStoreNotifications = onRequest({
       return res.status(400).send("Missing transaction info");
     }
 
-    const decodedTransaction = decodeJWS(transactionInfo);
-    if (!decodedTransaction) {
-      return res.status(400).send("Invalid transaction info");
+    // 트랜잭션 JWS 검증 (보안 강화)
+    const transactionVerificationResult = await appStoreServerClient.verifyAndDecodeJWS(transactionInfo);
+    if (!transactionVerificationResult.success) {
+      console.error("❌ 트랜잭션 JWS 검증 실패:", transactionVerificationResult.error);
+      return res.status(401).send("Invalid transaction JWS signature");
     }
+    const decodedTransaction = transactionVerificationResult.data;
 
     // Bundle ID 검증
     const bundleId = appstoreBundleId.value();
@@ -82,23 +99,6 @@ exports.appStoreNotifications = onRequest({
 });
 
 /**
- * JWS 디코딩
- */
-function decodeJWS(jws) {
-  try {
-    const parts = jws.split(".");
-    if (parts.length !== 3) return null;
-    
-    const payload = parts[1];
-    const decoded = Buffer.from(payload, "base64url").toString("utf8");
-    return JSON.parse(decoded);
-  } catch (error) {
-    console.error("JWS 디코딩 실패:", error);
-    return null;
-  }
-}
-
-/**
  * 알림 처리 (통합 함수 사용)
  */
 async function processNotification(notificationType, subtype, transaction) {
@@ -115,17 +115,24 @@ async function processNotification(notificationType, subtype, transaction) {
   console.log(`✅ 사용자 발견: ${userId}`);
 
   try {
-    // History 분석
-    const historyResult = await appStoreServerClient.getTransactionHistory(transaction.transactionId);
-    
-    if (!historyResult.success) {
-      console.error("❌ History 조회 실패:", historyResult.error);
-      await saveBasicWebhookInfo(db, userId, notificationType, subtype, transaction);
-      return;
-    }
+    let subscriptionInfo;
 
-    // 구독 상태 분석
-    const subscriptionInfo = analyzeTransactionHistory(historyResult.data);
+    // 💡 최적화: 단순 알림은 History 조회 생략
+    if (SIMPLE_UPDATE_NOTIFICATIONS.includes(notificationType)) {
+      console.log("⚡️ 단순 알림: getTransactionHistory() 호출 생략");
+      subscriptionInfo = createSubscriptionInfoFromTransaction(transaction);
+    } else {
+      //  phức tạp한 알림은 History 조회
+      console.log("📚 복잡한 알림: getTransactionHistory() 호출");
+      const historyResult = await appStoreServerClient.getTransactionHistory(transaction.transactionId);
+      
+      if (!historyResult.success) {
+        console.error("❌ History 조회 실패:", historyResult.error);
+        await saveBasicWebhookInfo(db, userId, notificationType, subtype, transaction);
+        return;
+      }
+      subscriptionInfo = analyzeTransactionHistory(historyResult.data);
+    }
 
     // 통합 구독 데이터 업데이트
     const subscriptionUpdates = {
@@ -146,7 +153,7 @@ async function processNotification(notificationType, subtype, transaction) {
     console.log(`✅ 웹훅 처리 완료: ${userId}, entitlement: ${subscriptionInfo.entitlement}, hasUsedTrial: ${subscriptionInfo.hasUsedTrial}`);
 
   } catch (error) {
-    console.error("💥 History 분석 실패:", error);
+    console.error("💥 알림 처리 실패:", error);
     await saveBasicWebhookInfo(db, userId, notificationType, subtype, transaction);
   }
 }
@@ -198,6 +205,55 @@ async function findUserByOriginalTransactionId(db, originalTransactionId) {
 
   return usersQuery.empty ? null : usersQuery.docs[0].id;
 }
+
+/**
+ * 💡 단일 트랜잭션 정보로 구독 상태 객체를 생성하는 함수
+ * @param {object} transaction - 디코딩된 트랜잭션 정보
+ * @return {object} - 구독 정보 객체
+ */
+function createSubscriptionInfoFromTransaction(transaction) {
+  const result = {
+    entitlement: Entitlement.FREE,
+    subscriptionStatus: SubscriptionStatus.EXPIRED,
+    autoRenewEnabled: false,
+    subscriptionType: null,
+    expirationDate: null,
+  };
+
+  const now = Date.now();
+  const expiresDate = parseInt(transaction.expiresDate) || 0;
+  const isExpired = expiresDate > 0 && expiresDate < now;
+  const isRevoked = !!transaction.revocationDate;
+
+  result.expirationDate = expiresDate.toString();
+
+  if (isRevoked) {
+    result.entitlement = Entitlement.FREE;
+    result.subscriptionStatus = SubscriptionStatus.REFUNDED;
+  } else if (isExpired) {
+    result.entitlement = Entitlement.FREE;
+    result.subscriptionStatus = SubscriptionStatus.EXPIRED;
+  } else {
+    result.entitlement = Entitlement.PREMIUM;
+    result.subscriptionStatus = SubscriptionStatus.ACTIVE;
+    result.autoRenewEnabled = true; // 만료되지 않았으므로 자동 갱신 중으로 간주
+  }
+  
+  // 구독 타입 결정
+  if (transaction.productId?.includes("yearly")) {
+    result.subscriptionType = "yearly";
+  } else if (transaction.productId?.includes("monthly")) {
+    result.subscriptionType = "monthly";
+  }
+
+  console.log("📦 단일 트랜잭션으로 구독 정보 생성:", {
+    entitlement: result.entitlement,
+    status: result.subscriptionStatus,
+  });
+
+  return result;
+}
+
 
 /**
  * Transaction History 분석 (기존 로직 유지)

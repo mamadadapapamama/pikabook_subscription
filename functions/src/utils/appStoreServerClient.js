@@ -184,10 +184,21 @@ class AppStoreConnectClient {
         error: error.message,
       };
     }
-    }
   }
 
-  /**
+  async verifyAndDecodeJWS(jws) {
+    try {
+      const client = this.initialize();
+      const verificationResult = await client.verifyAndDecodeNotification(jws);
+      return { success: true, data: verificationResult };
+    } catch (error) {
+      console.error("❌ [Connect] JWS 검증 실패:", error.message);
+      return { success: false, error: error.message };
+    }
+  }
+}
+
+/**
  * 🚀 In-App Purchase API Client (JWS 검증, 프로모션 오퍼)
  * 
  * 사용처:
@@ -249,60 +260,15 @@ class InAppPurchaseClient {
     try {
       console.log("🔐 [IAP] JWS 검증 시작");
       const client = this.initialize();
+      const verificationResult = await client.verifyAndDecodeTransaction(jwsRepresentation);
 
-      // 실제 JWS 검증 로직은 여기에 구현
-      // 현재는 기본 디코딩만 수행
-      return this.decodeJWS(jwsRepresentation);
-    } catch (error) {
-      console.error("❌ [IAP] JWS 검증 실패:", error.message);
-        return {
-        success: false,
-        error: error.message,
-        };
-    }
-  }
-
-  decodeJWS(jwsRepresentation) {
-    try {
-      console.log("🔐 [IAP] JWS 디코딩 시작");
-
-      const parts = jwsRepresentation.split(".");
-      if (parts.length !== 3) {
-        return {
-          success: false,
-          error: "Invalid JWS format",
-        };
-      }
-
-      const headerPayload = parts[0];
-      const decodedHeader = Buffer.from(headerPayload, "base64url").toString("utf8");
-      const header = JSON.parse(decodedHeader);
-
-      const payloadPart = parts[1];
-      const decodedPayload = Buffer.from(payloadPart, "base64url").toString("utf8");
-      const payload = JSON.parse(decodedPayload);
-
-      const requiredFields = ["transactionId", "originalTransactionId", "productId"];
-      for (const field of requiredFields) {
-        if (!payload[field]) {
-          return {
-            success: false,
-            error: `Missing required field: ${field}`,
-          };
-        }
-      }
-
-      const environment = payload.environment || "Production";
-      console.log("🌍 [IAP] Transaction Environment:", environment);
-
+      console.log("✅ [IAP] JWS 검증 성공");
       return {
         success: true,
-        data: payload,
-        header: header,
-        environment: environment,
+        data: verificationResult,
       };
     } catch (error) {
-      console.error("❌ [IAP] JWS 디코딩 실패:", error.message);
+      console.error("❌ [IAP] JWS 검증 실패:", error.message);
       return {
         success: false,
         error: error.message,
@@ -310,42 +276,39 @@ class InAppPurchaseClient {
     }
   }
 
-  async getSubscriptionStatus(originalTransactionId) {
+  async verifyAndDecodeJWS(jws) {
     try {
-      console.log("🔍 [IAP] 구독 상태 조회 시작:", originalTransactionId);
       const client = this.initialize();
-
-      const response = await client.getAllSubscriptionStatuses(originalTransactionId);
-
-      if (response && response.data) {
-        console.log("✅ [IAP] 구독 상태 조회 성공");
-        return {
-          success: true,
-          data: response.data,
-        };
-      } else {
-        console.error("❌ [IAP] 구독 상태 정보가 없음");
-        return {
-          success: false,
-          error: "No subscription status in response",
-        };
-      }
+      // 트랜잭션과 알림 JWS를 모두 처리할 수 있는 일반적인 검증 로직
+      const verificationResult = await client.verifyAndDecodeNotification(jws)
+        .catch(() => client.verifyAndDecodeTransaction(jws));
+      
+      return { success: true, data: verificationResult };
     } catch (error) {
-      console.error("❌ [IAP] 구독 상태 조회 실패:", error.message);
-      return {
-        success: false,
-        error: error.message || error.toString(),
-      };
+      console.error("❌ [IAP] JWS 검증 실패:", error.message);
+      return { success: false, error: error.message };
     }
   }
 }
 
-// 싱글톤 인스턴스들
-const appStoreConnectClient = new AppStoreConnectClient();
+// 🎯 appStoreServerClient 인스턴스 생성
+const appStoreServerClient = new AppStoreConnectClient();
 const inAppPurchaseClient = new InAppPurchaseClient();
 
-// 🎯 기존 호환성을 위한 기본 클라이언트 (App Store Connect 사용)
-const appStoreServerClient = appStoreConnectClient;
+// JWS 디코딩만 하는 함수 (클래스 외부로 이동)
+function decodeJWS(jwsRepresentation) {
+  try {
+    const parts = jwsRepresentation.split(".");
+    if (parts.length !== 3) return null;
+    
+    const payload = parts[1];
+    const decoded = Buffer.from(payload, "base64url").toString("utf8");
+    return JSON.parse(decoded);
+  } catch (error) {
+    console.error("JWS 디코딩 실패:", error);
+    return null;
+  }
+}
 
 module.exports = {
   // 🎯 새로운 분리된 클라이언트들
@@ -375,4 +338,5 @@ module.exports = {
   appstorePrivateKey: appstoreConnectPrivateKey,
   appstoreBundleId: appstoreConnectBundleId,
   appstoreEnvironment: appstoreConnectEnvironment,
+  decodeJWS, // 외부에서 사용할 수 있도록 export
 };
