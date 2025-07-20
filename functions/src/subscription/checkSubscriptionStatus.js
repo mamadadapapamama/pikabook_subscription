@@ -153,7 +153,6 @@ function isCacheExpired(cachedData) {
 }
 
 
-
 module.exports = {
   subCheckSubscriptionStatus,
 };

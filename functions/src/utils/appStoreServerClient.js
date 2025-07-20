@@ -85,19 +85,19 @@ class InAppPurchaseClient {
 
       // 1. API 클라이언트 초기화
       this._client = new AppStoreServerAPIClient(
-          privateKey,
-          keyId,
-          issuerId,
-          bundleId,
-          appStoreEnvironment,
+        privateKey,
+        keyId,
+        issuerId,
+        bundleId,
+        appStoreEnvironment,
       );
 
       // 2. ⭐️ JWS Verifier 초기화
       this._verifier = new SignedDataVerifier(
-          appleRootCerts,
-          true, // enableOnlineChecks
-          appStoreEnvironment,
-          bundleId,
+        appleRootCerts,
+        true, // enableOnlineChecks
+        appStoreEnvironment,
+        bundleId,
       );
 
       this._isInitialized = true;
@@ -145,7 +145,7 @@ class InAppPurchaseClient {
       };
     }
   }
-  
+
   /**
    * App Store 서버 알림(signedPayload)을 검증하고 디코딩합니다.
    * webhook에서 사용됩니다.
@@ -158,16 +158,16 @@ class InAppPurchaseClient {
       if (!this._verifier) {
         throw new Error("Verifier가 초기화되지 않았습니다.");
       }
-      
+
       const decodedData = await this._verifier.verifyAndDecodeNotification(signedPayload);
-      return { success: true, data: decodedData };
+      return {success: true, data: decodedData};
     } catch (error) {
       if (error instanceof VerificationException) {
-         console.error(`❌ [IAP] 알림 페이로드 검증 실패: ${error.message} (Status: ${error.status})`);
+        console.error(`❌ [IAP] 알림 페이로드 검증 실패: ${error.message} (Status: ${error.status})`);
       } else {
-         console.error("❌ [IAP] 알림 페이로드 검증 중 알 수 없는 오류:", error.message);
+        console.error("❌ [IAP] 알림 페이로드 검증 중 알 수 없는 오류:", error.message);
       }
-      return { success: false, error: error.message };
+      return {success: false, error: error.message};
     }
   }
 
@@ -182,7 +182,7 @@ class InAppPurchaseClient {
       console.log("🔍 [Connect] Transaction History 조회 시작:", originalTransactionId);
 
       const response = await this._client.getTransactionHistory(originalTransactionId);
-      
+
       console.log("✅ [Connect] Transaction History 조회 성공");
       return {
         success: true,
@@ -202,7 +202,7 @@ class InAppPurchaseClient {
     try {
       this.initialize(); // 초기화 보장
       console.log("🔍 [Connect] Transaction 정보 조회 시작:", transactionId);
-      
+
       const response = await this._client.getTransactionInfo(transactionId);
 
       console.log("✅ [Connect] Transaction 정보 조회 성공");
@@ -219,7 +219,7 @@ class InAppPurchaseClient {
    * API 호출에서 발생하는 에러를 공통으로 처리합니다.
    * @param {Error} error - The error object.
    * @param {string} context - The context of the API call.
-   * @returns {{success: false, error: string}}
+   * @return {{success: false, error: string}}
    */
   handleApiError(error, context) {
     console.error(`❌ [Connect] ${context} 실패:`, error.message);

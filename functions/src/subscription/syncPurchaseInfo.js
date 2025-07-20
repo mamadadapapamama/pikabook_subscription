@@ -1,17 +1,24 @@
 // 📁 functions/src/subscription/syncPurchaseInfo.js
 // 🚀 Apple Best Practice: jwsRepresentation 기반 구매 정보 동기화
 const {onCall, HttpsError} = require("firebase-functions/v2/https");
+const {defineSecret} = require("firebase-functions/params");
 const admin = require("firebase-admin");
 const {SubscriptionStatus} = require("../shared/constant");
 const {checkInternalTestAccount} = require("../utils/testAccounts");
-const {inAppPurchaseClient} = require("../utils/appStoreServerClient");
-const {updateUnifiedSubscriptionData} = require("../utils/subscriptionDataManager");
-const {
-  iapKeyId,
-  iapIssuerId,
-  iapPrivateKey,
-  iapBundleId,
-} = require("../utils/appStoreServerClient");
+// ⭐️ 수정: `iapClient` 싱글톤 인스턴스를 가져옵니다.
+const {iapClient} = require("../utils/appStoreServerClient");
+
+// Secret Manager에서 환경 변수 정의
+const iapKeyId = defineSecret("APP_STORE_KEY_ID");
+const iapIssuerId = defineSecret("APP_STORE_ISSUER_ID");
+const iapBundleId = defineSecret("APP_STORE_BUNDLE_ID");
+const iapPrivateKeyBase64 = defineSecret("APP_STORE_PRIVATE_KEY_BASE64");
+const iapEnvironment = defineSecret("APP_STORE_ENVIRONMENT");
+const appleRootCert1 = defineSecret("APPLE_ROOT_CA_G1_BASE64");
+const appleRootCert2 = defineSecret("APPLE_ROOT_CA_G2_BASE64");
+const appleRootCert3 = defineSecret("APPLE_ROOT_CA_G3_BASE64");
+const {updateUnifiedSubscriptionData} =
+  require("../utils/subscriptionDataManager");
 
 /**
  * 🚀 Apple Best Practice: jwsRepresentation 기반 구매 정보 동기화
@@ -27,13 +34,18 @@ const {
  * @param {string} request.data.userId - 사용자 UID (앱 계정 연결용)
  * @return {Promise<object>} 구독 상태 정보
  */
+// ⭐️ 수정: Secret Manager의 비밀들을 함수 dependency로 선언합니다.
 const syncPurchaseInfo = onCall({
   region: "asia-southeast1",
   secrets: [
     iapKeyId,
     iapIssuerId,
-    iapPrivateKey,
     iapBundleId,
+    iapPrivateKeyBase64,
+    iapEnvironment,
+    appleRootCert1,
+    appleRootCert2,
+    appleRootCert3,
   ],
 }, async (request) => {
   try {
@@ -72,7 +84,8 @@ const syncPurchaseInfo = onCall({
     }
 
     // 🎯 Step 2: JWS 직접 검증 및 트랜잭션 정보 추출
-    const transactionInfo = await inAppPurchaseClient.verifyJWS(jwsRepresentation);
+    // ⭐️ 수정: `iapClient` 인스턴스의 `verifyJWS` 메서드를 호출합니다.
+    const transactionInfo = await iapClient.verifyJWS(jwsRepresentation);
 
     if (!transactionInfo.success) {
       console.error("❌ JWS 검증 실패:", transactionInfo.error);

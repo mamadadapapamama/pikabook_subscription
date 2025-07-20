@@ -1,17 +1,22 @@
 // Firebase Functions v2 - App Store Server Notifications 웹훅
 const {onRequest} = require("firebase-functions/v2/https");
+const {defineSecret} = require("firebase-functions/params");
 const admin = require("firebase-admin");
 const {Entitlement, SubscriptionStatus} = require("../shared/constant");
-const {updateUnifiedSubscriptionData} = require("../utils/subscriptionDataManager");
-const {
-  appstoreKeyId,
-  appstoreIssuerId,
-  appstorePrivateKey,
-  appstoreBundleId,
-  appstoreEnvironment,
-  appStoreServerClient,
-  decodeJWS,
-} = require("../utils/appStoreServerClient");
+const {updateUnifiedSubscriptionData} =
+  require("../utils/subscriptionDataManager");
+// ⭐️ 수정: `iapClient` 싱글톤 인스턴스를 가져옵니다.
+const {iapClient} = require("../utils/appStoreServerClient");
+
+// Secret Manager에서 환경 변수 정의
+const iapKeyId = defineSecret("APP_STORE_KEY_ID");
+const iapIssuerId = defineSecret("APP_STORE_ISSUER_ID");
+const iapBundleId = defineSecret("APP_STORE_BUNDLE_ID");
+const iapPrivateKeyBase64 = defineSecret("APP_STORE_PRIVATE_KEY_BASE64");
+const iapEnvironment = defineSecret("APP_STORE_ENVIRONMENT");
+const appleRootCert1 = defineSecret("APPLE_ROOT_CA_G1_BASE64");
+const appleRootCert2 = defineSecret("APPLE_ROOT_CA_G2_BASE64");
+const appleRootCert3 = defineSecret("APPLE_ROOT_CA_G3_BASE64");
 
 // 🎯 디버그 모드 설정
 const kDebugMode = process.env.NODE_ENV === "development" || process.env.DEBUG === "true";
@@ -30,16 +35,20 @@ const SIMPLE_UPDATE_NOTIFICATIONS = [
 /**
  * 🔥 App Store Server Notifications 웹훅 엔드포인트
  */
+// ⭐️ 수정: Secret Manager의 비밀들을 함수 dependency로 선언합니다.
 exports.appStoreNotifications = onRequest({
   region: "asia-southeast1",
-  secrets: [
-    appstoreKeyId,
-    appstoreIssuerId,
-    appstorePrivateKey,
-    appstoreBundleId,
-    appstoreEnvironment,
-  ],
   cors: false,
+  secrets: [
+    iapKeyId,
+    iapIssuerId,
+    iapBundleId,
+    iapPrivateKeyBase64,
+    iapEnvironment,
+    appleRootCert1,
+    appleRootCert2,
+    appleRootCert3,
+  ],
 }, async (req, res) => {
   try {
     console.log("📡 App Store 웹훅 알림 수신:", req.method);
@@ -54,8 +63,8 @@ exports.appStoreNotifications = onRequest({
       return res.status(400).send("Missing signedPayload");
     }
 
-    // JWS 검증 및 디코딩 (보안 강화)
-    const verificationResult = await appStoreServerClient.verifyAndDecodeJWS(notificationPayload.signedPayload);
+    // ⭐️ 수정: `iapClient`를 사용하여 JWS 검증 및 디코딩
+    const verificationResult = await iapClient.verifySignedPayload(notificationPayload.signedPayload);
 
     if (!verificationResult.success) {
       console.error("❌ 웹훅 JWS 검증 실패:", verificationResult.error);
@@ -65,26 +74,22 @@ exports.appStoreNotifications = onRequest({
 
     const notificationType = decodedPayload.notificationType;
     const subtype = decodedPayload.subtype;
-    const transactionInfo = decodedPayload.data?.signedTransactionInfo;
+    const signedTransactionInfo = decodedPayload.data?.signedTransactionInfo;
 
-    if (!transactionInfo) {
-      return res.status(400).send("Missing transaction info");
+    if (!signedTransactionInfo) {
+      console.warn("✅ 알림에 트랜잭션 정보가 없습니다. (예: TEST 알림). 처리를 종료합니다.", {notificationType, subtype});
+      return res.status(200).send("OK. No transaction info.");
     }
 
-    // 트랜잭션 JWS 검증 (보안 강화)
-    const transactionVerificationResult = await appStoreServerClient.verifyAndDecodeJWS(transactionInfo);
+    // ⭐️ 수정: `iapClient`를 사용하여 트랜잭션 JWS 검증
+    const transactionVerificationResult = await iapClient.verifyJWS(signedTransactionInfo);
     if (!transactionVerificationResult.success) {
       console.error("❌ 트랜잭션 JWS 검증 실패:", transactionVerificationResult.error);
       return res.status(401).send("Invalid transaction JWS signature");
     }
     const decodedTransaction = transactionVerificationResult.data;
 
-    // Bundle ID 검증
-    const bundleId = appstoreBundleId.value();
-    if (decodedTransaction.bundleId !== bundleId) {
-      console.error("❌ Bundle ID 불일치");
-      return res.status(400).send("Bundle ID mismatch");
-    }
+    // Bundle ID 검증은 iapClient 내부에서 이미 처리됩니다.
 
     console.log(`📢 처리: ${notificationType} (${subtype}), 제품: ${decodedTransaction.productId}`);
 
@@ -122,9 +127,10 @@ async function processNotification(notificationType, subtype, transaction) {
       console.log("⚡️ 단순 알림: getTransactionHistory() 호출 생략");
       subscriptionInfo = createSubscriptionInfoFromTransaction(transaction);
     } else {
-      //  phức tạp한 알림은 History 조회
+      //  복잡한 알림은 History 조회
       console.log("📚 복잡한 알림: getTransactionHistory() 호출");
-      const historyResult = await appStoreServerClient.getTransactionHistory(transaction.transactionId);
+      // ⭐️ 수정: `iapClient` 사용
+      const historyResult = await iapClient.getTransactionHistory(transaction.originalTransactionId);
 
       if (!historyResult.success) {
         console.error("❌ History 조회 실패:", historyResult.error);
@@ -278,7 +284,7 @@ function analyzeTransactionHistory(historyData) {
 
   // 모든 트랜잭션 분석
   for (const signedTransaction of transactions) {
-    const decodedTransaction = decodeJWS(signedTransaction);
+    const decodedTransaction = iapClient.decodeJWS(signedTransaction);
     if (!decodedTransaction) continue;
 
     const offerType = decodedTransaction.offerType;
